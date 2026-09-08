@@ -1,4 +1,18 @@
-.Rproj.user
+# R
+.Rproj.user/
 .Rhistory
 .RData
 .Ruserdata
+
+# Rasters descomprimidos — se regeneran con: unzip data/datos_proyecto_1.zip -d data/
+data/datos_proyecto_1/
+*.tif
+
+# Salidas intermedias
+resultados/*.png
+resultados/*.pdf
+!resultados/.gitkeep
+
+# SO
+.DS_Store
+Thumbs.db
