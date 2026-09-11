@@ -175,6 +175,11 @@ Los `.tif` descomprimidos están en `.gitignore`: **no se versionan**, se regene
 
 ## 7. Material de clase de referencia
 
+> 📋 **Ver [`CRITERIO_METODOLOGICO.md`](CRITERIO_METODOLOGICO.md)** — inventario del material,
+> qué funciones y librerías tienen precedente en clase, y por qué `Ejemplo4_Geoestadística.R`
+> es el molde de este proyecto.
+
+
 Insumos del curso aplicables a este proyecto (geoestadística y datos espaciales):
 
 - `Practic_Geostatistics.R`
