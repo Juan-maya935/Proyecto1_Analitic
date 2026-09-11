@@ -23,8 +23,8 @@ Profesor: **Johann A. Ospina** — jaospina@uao.edu.co
 | Nombre completo | Código | Correo institucional |
 |---|---|---|
 | César Reyes | 2236379 | |
-| | | |
-| | | |
+| Yesenia Diaz|2231783  | |
+| | | 
 | | | |
 
 ---
