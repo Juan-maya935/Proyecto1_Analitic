@@ -1,0 +1,13 @@
+"tendencia","cutoff_km","modelo","pepita","meseta","rango_practico_km","SCE"
+"lineal",113.2,"esferico",0,578.7,90,42643.2
+"cuadratica",113.2,"esferico",0,176.2,61.3,13449.4
+"lineal",50,"esferico",0,769.6,144,14980.9
+"cuadratica",50,"esferico",0,161.7,56.1,4886.9
+"lineal",113.2,"exponencial",0,735.1,179,74257
+"cuadratica",113.2,"exponencial",0,179.2,70.9,16306.9
+"lineal",50,"exponencial",0,1275.1,431.9,17849.2
+"cuadratica",50,"exponencial",0,285.6,174,4936.6
+"lineal",113.2,"gaussiano",12,586.6,73,34560.2
+"cuadratica",113.2,"gaussiano",18,175.1,48.7,13621.6
+"lineal",50,"gaussiano",25.1,537.6,73.4,10709.3
+"cuadratica",50,"gaussiano",15.2,152.9,41.9,4773

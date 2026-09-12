@@ -730,3 +730,186 @@ figura("fig10_correlograma.png", {
        col = "red", labels = "E[I] bajo aleatoriedad")
   grid(col = "grey85")
 }, ancho = 1900, alto = 1400)
+
+
+################################################################################
+# PASO 6. SEMIVARIOGRAMA EMPIRICO Y AJUSTE DE MODELOS TEORICOS
+#
+# Respaldo del material:
+#
+# - Lecture_SpatialStatistics.pdf, ec. (11):
+#     gamma(h) = 1/(2 N(h)) * SUM (z_i - z_j)^2
+#   y tres modelos validos, ec. (12) esferico, (13) exponencial, (14) gaussiano,
+#   parametrizados por pepita c0, meseta c0+c1 y rango a.
+#
+# - Geoestadistica (libro del curso):
+#     "En caso de encontrarse tendencia en los datos, esta tendencia se modela
+#      con modelos de regresion polinomicos [...] y el semivariograma se
+#      construye con los residuales obtenidos"
+#     "en general, se usan los rezagos espaciales hasta la mitad de la maxima
+#      distancia"
+#     "Es importante elegir una distancia maxima [...] en caso de que se observe
+#      un comportamiento erratico a distancias mayores"
+#
+# Se llevan DOS tendencias en paralelo (lineal y cuadratica) y se comparan.
+################################################################################
+
+cat("\n================ PASO 6: SEMIVARIOGRAMA ================\n")
+
+# ---- 6.1 Las dos tendencias en competencia ----------------------------------
+formulas_tendencia <- list(
+  lineal     = precip ~ x_km + y_km + altitud,
+  cuadratica = precip ~ x_km + I(x_km^2) + y_km + altitud
+)
+
+modelos_tend <- lapply(formulas_tendencia, function(f) lm(f, data = datos))
+residuales_tend <- lapply(modelos_tend, residuals)
+
+cat("\n--- Comparacion de tendencias ---\n")
+print(do.call(rbind, lapply(names(modelos_tend), function(nm) {
+  m <- modelos_tend[[nm]]; r <- residuals(m)
+  pw <- pesos_espaciales(D, 0.10)
+  data.frame(tendencia = nm,
+             R2_ajustado = round(summary(m)$adj.r.squared, 4),
+             sd_residual = round(sd(r), 2),
+             shapiro_p   = round(shapiro.test(r)$p.value, 4),
+             moran_residual = round(moran(r, pw$W), 3))
+})))
+
+# ---- 6.2 Semivariograma empirico --------------------------------------------
+# Ecuacion (11) de la Lecture, agrupando los pares en intervalos de distancia.
+
+semivariograma_empirico <- function(resid, D, cutoff, n_bins = 12) {
+  pares <- which(upper.tri(D), arr.ind = TRUE)
+  h     <- D[upper.tri(D)]
+  gamma <- (resid[pares[, 1]] - resid[pares[, 2]])^2 / 2
+  en    <- h <= cutoff
+  bins  <- cut(h[en], breaks = n_bins)
+  na.omit(data.frame(h = tapply(h[en], bins, mean),
+                     gamma = tapply(gamma[en], bins, mean),
+                     N = tapply(gamma[en], bins, length)))
+}
+
+D_MAX <- max(D)
+CUTOFF_LIBRO <- D_MAX / 2        # regla general del libro
+CUTOFF_CORR  <- 50               # donde el correlograma cruza cero (Paso 5)
+
+cat(sprintf("\nDistancia maxima entre estaciones: %.1f km\n", D_MAX))
+cat(sprintf("Cutoff regla del libro (mitad):    %.1f km\n", CUTOFF_LIBRO))
+cat(sprintf("Cutoff por comportamiento erratico: %.1f km  (correlograma, Paso 5)\n", CUTOFF_CORR))
+
+# ---- 6.3 Los tres modelos validos de la Lecture -----------------------------
+mod_esferico <- function(h, c0, c1, a)
+  ifelse(h <= a, c0 + c1 * (1.5 * (h / a) - 0.5 * (h / a)^3), c0 + c1)
+mod_exponencial <- function(h, c0, c1, a) c0 + c1 * (1 - exp(-h / a))
+mod_gaussiano   <- function(h, c0, c1, a) c0 + c1 * (1 - exp(-(h / a)^2))
+
+MODELOS <- list(esferico = mod_esferico, exponencial = mod_exponencial,
+                gaussiano = mod_gaussiano)
+
+# Ajuste por minimos cuadrados ordinarios sobre el semivariograma empirico
+# (libro, seccion 3.1), con optim L-BFGS-B y varios arranques porque los
+# modelos no son lineales en los parametros.
+ajustar_modelo <- function(sv, fn) {
+  sce <- function(th) sum((sv$gamma - fn(sv$h, th[1], th[2], th[3]))^2)
+  arranques <- quantile(sv$h, c(0.1, 0.25, 0.5, 0.75))
+  cand <- lapply(arranques, function(a0)
+    optim(c(c0 = 0, c1 = max(sv$gamma), a = a0), sce, method = "L-BFGS-B",
+          lower = c(0, 0.01, 1),
+          upper = c(max(sv$gamma), 5 * max(sv$gamma), 3 * max(sv$h))))
+  mejor <- cand[[which.min(sapply(cand, function(x) x$value))]]
+  c(c0 = unname(mejor$par[1]), c1 = unname(mejor$par[2]),
+    a = unname(mejor$par[3]), SCE = mejor$value)
+}
+
+# ---- 6.4 Rejilla de ajustes: 2 tendencias x 2 cutoffs x 3 modelos -----------
+rejilla <- expand.grid(tendencia = names(residuales_tend),
+                       cutoff = c(CUTOFF_LIBRO, CUTOFF_CORR),
+                       modelo = names(MODELOS), stringsAsFactors = FALSE)
+
+resultados_sv <- do.call(rbind, lapply(seq_len(nrow(rejilla)), function(i) {
+  fila <- rejilla[i, ]
+  sv <- semivariograma_empirico(residuales_tend[[fila$tendencia]], D, fila$cutoff)
+  aj <- ajustar_modelo(sv, MODELOS[[fila$modelo]])
+  # Rango practico: distancia a la que gamma alcanza el 95% de la meseta
+  rp <- switch(fila$modelo, esferico = aj["a"],
+               exponencial = 3 * aj["a"], gaussiano = sqrt(3) * aj["a"])
+  data.frame(tendencia = fila$tendencia, cutoff_km = round(fila$cutoff, 1),
+             modelo = fila$modelo, pepita = round(aj["c0"], 1),
+             meseta = round(aj["c0"] + aj["c1"], 1),
+             rango_practico_km = round(rp, 1), SCE = round(aj["SCE"], 1),
+             row.names = NULL)
+}))
+
+cat("\n--- Ajustes: 2 tendencias x 2 cutoffs x 3 modelos ---\n")
+print(resultados_sv[order(resultados_sv$tendencia, resultados_sv$cutoff_km,
+                          resultados_sv$SCE), ])
+write.csv(resultados_sv, file.path(DIR_SALIDA, "tabla_semivariogramas.csv"),
+          row.names = FALSE)
+
+
+# ---- 6.5 Diagnostico: meseta contra varianza muestral -----------------------
+# Bajo estacionariedad de segundo orden (libro, Definicion 4) la meseta del
+# semivariograma debe aproximar la varianza del proceso. Si la meseta la supera
+# claramente, el semivariograma sigue creciendo: queda tendencia sin modelar y
+# el supuesto no se cumple.
+
+varianzas <- sapply(residuales_tend, var)
+cat("\n--- Meseta estimada contra varianza de los residuales ---\n")
+diag_meseta <- do.call(rbind, lapply(seq_len(nrow(resultados_sv)), function(i) {
+  f <- resultados_sv[i, ]
+  data.frame(tendencia = f$tendencia, cutoff = f$cutoff_km, modelo = f$modelo,
+             meseta = f$meseta,
+             varianza = round(varianzas[[f$tendencia]], 1),
+             razon = round(f$meseta / varianzas[[f$tendencia]], 2),
+             row.names = NULL)
+}))
+diag_meseta$veredicto <- ifelse(abs(diag_meseta$razon - 1) <= 0.25, "coherente",
+                         ifelse(diag_meseta$razon > 1.25, "meseta > varianza: NO estacionario",
+                                "meseta < varianza"))
+print(diag_meseta[order(diag_meseta$tendencia, diag_meseta$cutoff), ])
+write.csv(diag_meseta, file.path(DIR_SALIDA, "tabla_diagnostico_meseta.csv"), row.names = FALSE)
+
+
+# ---- 6.6 Figuras del semivariograma -----------------------------------------
+col_mod <- c(esferico = "#d73027", exponencial = "#1a9850", gaussiano = "#4575b4")
+
+figura_variograma <- function(nombre_tend, cutoff, titulo, archivo) {
+  resid <- residuales_tend[[nombre_tend]]
+  sv <- semivariograma_empirico(resid, D, cutoff)
+  pares_idx <- which(upper.tri(D), arr.ind = TRUE)
+  h_all <- D[upper.tri(D)]
+  g_all <- (resid[pares_idx[, 1]] - resid[pares_idx[, 2]])^2 / 2
+  en <- h_all <= cutoff
+
+  figura(archivo, {
+    par(mar = c(4.5, 4.5, 3.5, 1))
+    plot(h_all[en], g_all[en], pch = 20, col = "grey80", cex = 0.6, las = 1,
+         xlab = "Distancia h (km)", ylab = expression(gamma(h)),
+         main = titulo, ylim = c(0, quantile(sv$gamma, 1) * 1.9))
+    abline(h = var(resid), col = "grey30", lty = 3, lwd = 2)
+    hs <- seq(0, cutoff, length.out = 250)
+    for (m in names(MODELOS)) {
+      aj <- ajustar_modelo(sv, MODELOS[[m]])
+      lines(hs, MODELOS[[m]](hs, aj["c0"], aj["c1"], aj["a"]),
+            col = col_mod[m], lwd = 2.5)
+    }
+    points(sv$h, sv$gamma, pch = 19, col = "black", cex = 1.5)
+    legend("bottomright", bty = "o", bg = "white", cex = 0.75,
+           legend = c("nube de pares", "semivariograma empirico",
+                      names(MODELOS), "varianza muestral"),
+           col = c("grey80", "black", col_mod, "grey30"),
+           pch = c(20, 19, NA, NA, NA, NA),
+           lty = c(0, 0, 1, 1, 1, 3), lwd = c(0, 0, 2.5, 2.5, 2.5, 2))
+  }, ancho = 2000, alto = 1500)
+}
+
+figura_variograma("lineal", CUTOFF_CORR,
+  sprintf("Tendencia LINEAL - cutoff %g km", CUTOFF_CORR),
+  "fig11a_variograma_lineal.png")
+figura_variograma("cuadratica", CUTOFF_CORR,
+  sprintf("Tendencia CUADRATICA - cutoff %g km", CUTOFF_CORR),
+  "fig11b_variograma_cuadratica.png")
+figura_variograma("cuadratica", CUTOFF_LIBRO,
+  sprintf("Tendencia CUADRATICA - cutoff %.0f km (regla del libro)", CUTOFF_LIBRO),
+  "fig11c_variograma_cuadratica_libro.png")
