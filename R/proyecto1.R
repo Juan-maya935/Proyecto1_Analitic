@@ -246,7 +246,7 @@ figura("fig01_ciclo_anual.png", {
   plot(1:52, media_semanal, type = "o", pch = 19, cex = 0.6, col = "#08519c",
        xlab = "Semana ISO", ylab = "Precipitacion media del departamento (mm)",
        main = "Ciclo anual de precipitacion - Valle del Cauca (CHIRPS 2010-2025)",
-       las = 1)
+       las = 1, cex.main = 0.95)
   abline(v = SEMANA, col = "red", lty = 2, lwd = 2)
   text(SEMANA, media_semanal[SEMANA], labels = paste0("  Semana ", SEMANA),
        pos = 4, col = "red", cex = 0.8)
@@ -528,10 +528,10 @@ figura("fig07b_correlacion_simple.png", {
 
 # --- 4.3c Estratificado por banda de longitud ---
 figura("fig07c_estratificado.png", {
-  par(mar = c(4.5, 4.5, 3.5, 1))
+  par(mar = c(4.5, 4.5, 4.5, 1))
   plot(datos$altitud, datos$precip, type = "n", las = 1,
        xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
-       main = "Estratificado por longitud: el efecto de la altitud NO es homogeneo")
+       main = "Estratificado por longitud: el efecto de la altitud\nNO es homogeneo", cex.main = 1)
   for (k in seq_along(levels(datos$banda))) {
     sub <- datos[datos$banda == levels(datos$banda)[k], ]
     points(sub$altitud, sub$precip, pch = 21, bg = col_banda[k], cex = 1.5)

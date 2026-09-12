@@ -22,10 +22,9 @@ Profesor: **Johann A. Ospina** — jaospina@uao.edu.co
 
 | Nombre completo | Código | Correo institucional |
 |---|---|---|
-| César Reyes | 2236379 | |
-| Yesenia Diaz|2231783  | |
-| | | 
-| | | |
+| César Armando Reyes Oliveros | 2236379 | |
+| Yesenia Díaz | 2231783 | |
+| Juan Pablo Maya | | |
 
 ---
 
@@ -149,15 +148,31 @@ Los `.tif` descomprimidos están en `.gitignore`: **no se versionan**, se regene
 ```
 .
 ├── README.md                                    # este archivo
+├── Cuaderno_Proyecto1.ipynb                     # bitácora: qué se hizo y por qué
+├── Proyecto 1 AnalíticaDeDatos.pdf              # ← entregable 1: el documento
 ├── .gitignore
 ├── docs/
 │   └── Proyecto1_AnaliticaDeDatos_2026-2S.pdf   # enunciado original del profesor
 ├── data/
 │   └── datos_proyecto_1.zip                     # dataset original, sin modificar
 ├── R/
-│   └── proyecto1.R                              # ← el único .R reproducible que se entrega
+│   └── proyecto1.R                              # ← entregable 2: el .R reproducible
+├── informe/
+│   ├── informe.html                             # fuente del PDF
+│   └── generar_pdf.sh                           # lo imprime a PDF
 └── resultados/                                  # figuras y tablas generadas por el script
 ```
+
+**Regenerar el PDF** después de tocar el texto o las figuras:
+
+```bash
+Rscript R/proyecto1.R      # si cambiaron las figuras
+informe/generar_pdf.sh     # reimprime "Proyecto 1 AnalíticaDeDatos.pdf"
+```
+
+El documento **no** está hecho en R Markdown, que el enunciado prohíbe: es HTML
+con reglas `@page` de CSS, impreso por el motor del navegador. Una sola columna,
+A4, 9 páginas de las 10 permitidas.
 
 **Regla:** `docs/` y `data/` no se tocan — son los originales tal como los entregó el profesor. Todo lo que produzcamos vive en `R/` y `resultados/`.
 
@@ -165,10 +180,12 @@ Los `.tif` descomprimidos están en `.gitignore`: **no se versionan**, se regene
 
 ## 6. Entregables
 
-- [ ] `Proyecto 1 AnalíticaDeDatos.pdf` — documento, máx. 10 páginas, una columna
-- [ ] `proyecto1.R` — script único y reproducible, en archivo independiente
+- [x] `Proyecto 1 AnalíticaDeDatos.pdf` — **9 páginas**, una columna, listo en la raíz
+- [x] `proyecto1.R` — script único y reproducible (`R/proyecto1.R`), verificado desde un clon limpio
+- [x] Todos los integrantes listados en el documento
 - [ ] *(solo si se usó IA)* `prompts_IA.docx` — prompts y herramienta empleada
-- [ ] Todos los integrantes listados en el documento
+- [ ] Correos institucionales en la tabla de integrantes (sección 1)
+- [ ] Resolver con el grupo qué versión de `R/proyecto1.R` queda en `main`
 - [ ] Subido a Moodle antes del **13-sep-2026 23:59**
 
 ---
