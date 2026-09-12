@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Proyecto 1 AnalíticaDeDatos</title>
+<style>
+@page { size: A4; margin: 17mm 18mm 15mm 18mm; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font-family: "Liberation Serif","Times New Roman",serif; font-size: 9.6pt; line-height: 1.30; color: #111; margin: 0; text-align: justify; hyphens: auto; }
+h1 { font-size: 14pt; margin: 0 0 1mm 0; line-height: 1.2; }
+h2 { font-size: 10.6pt; margin: 4.5mm 0 1.4mm 0; border-bottom: 0.6pt solid #444; padding-bottom: 0.6mm; page-break-after: avoid; }
+h3 { font-size: 9.9pt; margin: 3mm 0 1mm 0; page-break-after: avoid; font-style: italic; font-weight: bold; }
+p { margin: 0 0 1.7mm 0; }
+.sub { font-size: 10pt; color: #333; margin: 0 0 2mm 0; }
+.cab { border-bottom: 1.2pt solid #111; padding-bottom: 2mm; margin-bottom: 3mm; }
+.meta { font-size: 8.4pt; color: #333; line-height: 1.35; }
+table { border-collapse: collapse; width: 100%; font-size: 8.1pt; margin: 1.5mm 0 1mm 0; page-break-inside: avoid; }
+th { background: #ececec; border-top: 0.7pt solid #333; border-bottom: 0.7pt solid #333; padding: 0.7mm 1.2mm; text-align: left; font-weight: bold; }
+td { border-bottom: 0.3pt solid #ccc; padding: 0.6mm 1.2mm; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.destaca td { background: #e8f0e4; font-weight: bold; }
+.cap { font-size: 7.9pt; color: #333; margin: 0.6mm 0 2.2mm 0; line-height: 1.28; }
+.cap b { color: #111; }
+figure { margin: 1.5mm 0 1mm 0; page-break-inside: avoid; text-align: center; }
+figure img { max-width: 100%; }
+.duo { display: flex; gap: 3mm; align-items: flex-start; }
+.duo > div { flex: 1; }
+.duo > div.ancha { flex: 1.55; }
+.duo > div.angosta { flex: 0.85; }
+code, .mono { font-family: "Liberation Mono","Courier New",monospace; font-size: 8.4pt; }
+.ec { text-align: center; margin: 1.6mm 0; font-size: 9.4pt; }
+ul, ol { margin: 0 0 1.7mm 0; padding-left: 5mm; }
+li { margin-bottom: 0.5mm; }
+.refs { font-size: 8.3pt; line-height: 1.3; }
+.refs p { margin: 0 0 1.2mm 0; padding-left: 5mm; text-indent: -5mm; }
+.nobreak { page-break-inside: avoid; }
+.nuevapag { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<div class="cab">
+<h1>Modelamiento de la precipitación semanal en el Valle del Cauca y papel de la correlación espacial</h1>
+<div class="sub">Proyecto 1 · Analítica de Datos · 2026-2S</div>
+<div class="meta">
+Universidad Autónoma de Occidente — Ingeniería de Datos e Inteligencia Artificial · Profesor: Johann A. Ospina<br>
+<b>Integrantes:</b> César Armando Reyes Oliveros (2236379) · Yesenia Díaz (2231783) · Juan Pablo Maya<br>
+<b>Código adjunto:</b> <span class="mono">proyecto1.R</span>, archivo único y reproducible. Todo el desarrollo está hecho en R con <span class="mono">terra</span> (carga de mapas) y funciones base del lenguaje.
+</div>
+</div>
+
+<h2>1. Problema y datos</h2>
+
+<p>El Valle del Cauca reúne en poco más de 150 km de ancho tres regímenes climáticos que no se parecen entre sí: la vertiente pacífica, una de las zonas más lluviosas del planeta; el valle interandino, seco y plano; y las dos cordilleras que lo encierran. Esa heterogeneidad es la que hace del departamento un buen banco de pruebas para la pregunta que plantea el enunciado, que no es solo predecir lluvia sino <b>evaluar cuánto aporta la correlación espacial</b> cuando ya se tiene un modelo de regresión razonable.</p>
+
+<p>Se trabajó con los rásteres entregados: precipitación semanal CHIRPS, temperatura y radiación de NASA POWER, y altitud SRTM, todos en la misma grilla de 0,05° (39 filas × 37 columnas = 1 443 píxeles, EPSG:4326). La estrategia fue la del kriging universal: separar la lluvia en una <b>tendencia determinística</b> explicada por posición y relieve, y un <b>residuo espacialmente correlacionado</b> que se interpola con kriging ordinario. Cada paso se apoyó en el material del curso y todo el código es base R salvo la carga de mapas.</p>
+
+<h3>1.1 Auditoría previa: tres cosas que había que arreglar antes de modelar</h3>
+
+<p><b>Valores centinela.</b> CHIRPS no codifica los vacíos como <span class="mono">NA</span> sino como negativos muy grandes. El mínimo crudo de las 52 bandas es −76 867,3 mm en 104 celdas. Como la lluvia no puede ser negativa, se filtran (<span class="mono">r_precip[r_precip &lt; 0] &lt;- NA</span>); el mínimo pasa entonces a 2,77 mm, que ya es un valor físico. Sin ese filtro, cualquier media, correlación o variograma calculado después queda contaminado.</p>
+
+<p><b>El rectángulo no es el departamento.</b> Los 1 443 píxeles incluyen océano Pacífico y territorio vecino. Al enmascarar con altitud y precipitación simultáneamente quedan <b>688 celdas</b>, y ese es el denominador correcto para cualquier porcentaje. Medir cobertura contra las 1 443 celdas lleva a concluir que la altitud solo cubre el 47,7 % del área y a descartarla, cuando en realidad la cubre por completo.</p>
+
+<p><b>Cobertura efectiva de las covariables.</b> El enunciado afirma que las capas son comparables píxel a píxel. Eso es cierto en geometría, pero no en contenido:</p>
+
+<table>
+<tr><th>Variable</th><th class="n">Celdas con dato</th><th class="n">% del área</th><th class="n">Valores distintos</th><th>Decisión</th></tr>
+<tr><td>Precipitación (CHIRPS)</td><td class="n">688</td><td class="n">100,0</td><td class="n">688</td><td>variable respuesta</td></tr>
+<tr><td>Altitud (SRTM)</td><td class="n">688</td><td class="n">100,0</td><td class="n">688</td><td>entra al modelo</td></tr>
+<tr><td>Temperatura (NASA POWER)</td><td class="n">123</td><td class="n">17,9</td><td class="n">56</td><td>se descarta</td></tr>
+<tr><td>Radiación (NASA POWER)</td><td class="n">28</td><td class="n">4,1</td><td class="n">3</td><td>se descarta</td></tr>
+</table>
+<p class="cap"><b>Tabla 1.</b> Cobertura real dentro del límite del departamento. El porcentaje está calculado sobre las 688 celdas del área de estudio, no sobre el rectángulo.</p>
+
+<p>La explicación es la resolución nativa: CHIRPS es 0,05° y NASA POWER es 0,5°, diez veces más grueso. El remuestreo reproyectó la rejilla pero no rellenó los huecos, así que dentro del departamento solo sobrevivieron los centros originales. En el caso de la radiación esto deja <b>tres números para todo el Valle</b>. No es un gradiente, es un escalón costa/valle/cordillera, y meterlo al modelo como variable continua le atribuiría a la radiación lo que en realidad es posición geográfica, que ya entra por la longitud. Temperatura y radiación quedan fuera; el modelo se construye con <b>altitud y coordenadas</b>, las tres con cobertura completa y sin un solo dato inventado. La alternativa era interpolar los huecos, lo que además de arriesgado habría exigido funciones que no se usaron en clase.</p>
+
+<h3>1.2 Elección de la semana</h3>
+
+<p>Se promediaron las 52 semanas de la climatología 2010-2025 y se tomó el máximo: la <b>semana 44</b> (primeros días de noviembre), con 91,9 mm de media, frente a los 28,7 mm de la semana 3, la más seca. Trabajar sobre el máximo tiene sentido práctico, porque es cuando la señal espacial es más fuerte y el contraste entre vertientes es más fácil de ver.</p>
+
+<figure><img src="../resultados/fig01_ciclo_anual.png" style="width:76%"></figure>
+<p class="cap"><b>Figura 1.</b> Ciclo anual promedio de la precipitación semanal (2010-2025). El régimen es <b>bimodal</b>, con máximos en abril-mayo y en octubre-noviembre: es la firma del doble paso de la Zona de Convergencia Intertropical sobre la latitud del departamento. El mínimo de la semana 3 corresponde al veranillo de enero. La semana elegida tiene más del triple de lluvia que la más seca.</p>
+
+<h2>2. Análisis exploratorio</h2>
+
+<p>Siguiendo el procedimiento de los ejemplos de geoestadística del curso, se sortearon <b>70 estaciones</b> dentro del polígono del departamento con <span class="mono">spatSample(method = "random")</span> y semilla fija, y se proyectaron las coordenadas a kilómetros (1° de latitud son 110,574 km; 1° de longitud son 111,320 km multiplicados por el coseno de la latitud). La proyección no es cosmética: el semivariograma mide semivarianza contra distancia, y en grados un grado de longitud y uno de latitud no miden lo mismo. Las 70 estaciones dan <b>2 415 pares</b> de puntos para el variograma.</p>
+
+<p>Vale la pena justificar por qué 70 y no las 688 celdas. Por costo, porque el sistema de kriging invierte una matriz de orden <i>n</i>+1 para cada punto predicho y en cada iteración de la validación cruzada. Y por sentido: un semivariograma modela un proceso observado en estaciones; con las 688 celdas ya se tiene el mapa completo y no queda nada que interpolar. El muestreo <b>simula</b> una red de observación para poder evaluar el kriging contra un valor que sí conocemos.</p>
+
+<table>
+<tr><th>Mínimo</th><th class="n">Q1</th><th class="n">Mediana</th><th class="n">Media</th><th class="n">Q3</th><th class="n">Máximo</th><th class="n">Desv. est.</th><th class="n">CV</th><th>Shapiro-Wilk</th></tr>
+<tr><td class="n">34,93</td><td class="n">51,72</td><td class="n">64,17</td><td class="n">91,09</td><td class="n">125,88</td><td class="n">189,01</td><td class="n">51,32</td><td class="n">56,3 %</td><td class="n">W = 0,816 · p = 6,4e−08</td></tr>
+</table>
+<p class="cap"><b>Tabla 2.</b> Estadística descriptiva de la precipitación en las 70 estaciones, semana 44 (mm).</p>
+
+<p>La media supera a la mediana en un 42 %, señal de asimetría fuerte a la derecha. De Q1 a la mediana hay 12 mm y de la mediana a Q3 hay 62 mm, cinco veces más: la cola larga es la vertiente pacífica. Shapiro-Wilk rechaza la normalidad con holgura. Esto importa porque el kriging es un predictor lineal cuyo óptimo se argumenta bajo normalidad, pero la pregunta relevante no es si la precipitación es normal, sino si lo son <b>los residuales</b> una vez quitada la tendencia. Queda respondida en la sección 3.</p>
+
+<figure><img src="../resultados/fig02_borde_valle.png" style="width:52%"></figure>
+<p class="cap"><b>Figura 2.</b> Precipitación de la semana 44 recortada al límite departamental, con las 70 estaciones sorteadas. La vertiente pacífica supera los 200 mm mientras el valle interandino se queda entre 30 y 50 mm: un factor de <b>5 a 7 veces en unos 150 km</b>. Es el efecto orográfico clásico, con la masa húmeda del Pacífico descargando contra la cordillera Occidental y llegando ya seca al valle. La consecuencia para el modelo es directa: buena parte de la varianza no es estructura aleatoria sino tendencia de gran escala en la longitud.</p>
+
+<table>
+<tr><th>Covariable</th><th class="n">Correlación con precipitación</th><th>Lectura</th></tr>
+<tr><td>Longitud (x, km)</td><td class="n">−0,890</td><td>por sí sola explica el 79 % de la varianza</td></tr>
+<tr><td>Altitud (m)</td><td class="n">−0,651</td><td>aparentemente fuerte, pero confundida (sección 3.1)</td></tr>
+<tr><td>Latitud (y, km)</td><td class="n">−0,274</td><td>aporte marginal</td></tr>
+</table>
+<p class="cap"><b>Tabla 3.</b> Correlación de Pearson de cada covariable con la precipitación.</p>
+
+<h2>3. Modelación</h2>
+<h3>3.1 La tendencia y una confusión que cambia el signo</h3>
+
+<p>Con las tres covariables se compararon dos modelos anidados:</p>
+
+<table>
+<tr><th>Modelo</th><th>Especificación</th><th class="n">R²</th><th class="n">R² ajustado</th></tr>
+<tr><td>A</td><td class="mono">precip ~ x_km + y_km</td><td class="n">0,8336</td><td class="n">0,8286</td></tr>
+<tr><td>B</td><td class="mono">precip ~ x_km + y_km + altitud</td><td class="n">0,8449</td><td class="n">0,8379</td></tr>
+</table>
+
+<table>
+<tr><th>Coeficiente del modelo B</th><th class="n">Estimación</th><th class="n">valor p</th><th>Observación</th></tr>
+<tr><td>Intercepto</td><td class="n">79,4979</td><td class="n">&lt; 0,0001</td><td></td></tr>
+<tr><td>x_km (longitud)</td><td class="n">−1,1610</td><td class="n">&lt; 0,0001</td><td>1,16 mm menos por cada km hacia el oriente</td></tr>
+<tr><td>y_km (latitud)</td><td class="n">+0,3165</td><td class="n">&lt; 0,0001</td><td>la correlación simple era −0,274: cambia de signo</td></tr>
+<tr><td>altitud</td><td class="n">+0,0098</td><td class="n">0,0317</td><td>la correlación simple era −0,651: cambia de signo</td></tr>
+</table>
+<p class="cap"><b>Tabla 4.</b> Modelos de tendencia y coeficientes del modelo elegido. El test F anidado A contra B da F = 4,817 con p = 0,0317, así que la altitud se queda.</p>
+
+<p>El resultado interesante es el cambio de signo de la altitud. La correlación simple decía "a más altura, menos lluvia". Lo que decía en realidad era "más al oriente, menos lluvia", porque la costa es baja <i>y</i> occidental mientras la cordillera es alta <i>y</i> oriental: la correlación entre altitud y longitud es de 0,755. Al controlar la posición, el efecto de la altitud se invierte y pasa a ser positivo. Es un caso de manual de <b>confusión (confounding)</b>, y conviene dejarlo explícito porque la conclusión ingenua (la altitud seca) es exactamente la contraria de la que sostiene el modelo.</p>
+
+<div class="duo">
+<div><figure><img src="../resultados/fig07c_estratificado.png" style="width:100%"></figure></div>
+<div><figure><img src="../resultados/fig07d_variable_anyadida.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 3.</b> Izquierda: la relación altitud-precipitación estratificada por tercil de longitud. Agrupando los 70 puntos la pendiente es −0,0369 mm/m, pero dentro de cada banda cambia: oeste −0,0582, centro +0,0167, este +0,0050. En el Chocó el máximo de lluvia está al nivel del mar porque la masa húmeda es somera y descarga abajo; en las laderas interiores manda el ascenso orográfico y la lluvia sube con la altura. Derecha: gráfico de variable añadida, con los residuales de precipitación y de altitud después de quitarle a ambos la posición. Su pendiente, +0,0098, es exactamente el coeficiente de la tabla 4, y es el efecto real de la altitud una vez descontada la longitud.</p>
+
+<h3>3.2 Diagnóstico de los residuales</h3>
+
+<p>Aquí se resuelve la duda que quedó abierta en la sección 2:</p>
+
+<table>
+<tr><th>Serie</th><th class="n">Desv. estándar</th><th class="n">Shapiro-Wilk W</th><th class="n">valor p</th><th>Conclusión</th></tr>
+<tr><td>Precipitación cruda</td><td class="n">51,32 mm</td><td class="n">0,8156</td><td class="n">6,4e−08</td><td>se rechaza normalidad</td></tr>
+<tr><td>Residuales del modelo B</td><td class="n">20,21 mm</td><td class="n">0,9750</td><td class="n">0,1739</td><td>no se rechaza normalidad</td></tr>
+</table>
+<p class="cap"><b>Tabla 5.</b> Normalidad antes y después de quitar la tendencia.</p>
+
+<p>La asimetría que se veía en la precipitación era la tendencia, no la distribución. Quitada la deriva, los residuales son compatibles con una normal y el kriging queda justificado como predictor lineal óptimo, <b>sin necesidad de transformar la variable</b>. Es un resultado que vale la pena subrayar porque el reflejo habitual ante una variable asimétrica es aplicarle logaritmo, y aquí habría sido un error: la asimetría desaparece sola al modelar la posición.</p>
+
+<div class="duo">
+<div class="ancha"><figure><img src="../resultados/fig06_residuales.png" style="width:100%"></figure></div>
+<div class="angosta"><figure><img src="../resultados/fig08c_mapa_residuales.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 4.</b> Izquierda: diagnóstico de los residuales. El Q-Q sigue la recta con colas ligeramente cortas, pero el panel de residuales contra ajustados dibuja una <b>U</b> clara (ajustado ≈ 30 → residual +30; ajustado ≈ 100 → residual −40; ajustado ≈ 170 → residual +25). Es curvatura sistemática: la tendencia lineal en longitud está mal especificada. Derecha: esos mismos residuales sobre el mapa. No están dispersos al azar sino <b>agrupados en manchas</b> — el modelo sobreestima en el centro del valle y en el norte, y subestima en los dos flancos. Es la U del panel anterior vista en el espacio: una recta no puede curvarse, así que aplana el fondo del valle hacia arriba y las laderas hacia abajo. Este mapa anticipa el resultado de la sección 4.</p>
+
+<h2>4. El papel de la correlación espacial</h2>
+
+<p>Esta es la pregunta central del enunciado y se responde con el procedimiento que prescribe el material del curso: aplicar el índice de Moran <b>a los residuales de la regresión</b>. La <i>Lecture on Spatial Statistics</i> lo dice explícitamente: los mínimos cuadrados suponen errores independientes, y cuando los residuales presentan autocorrelación espacial ese supuesto se viola y las estimaciones dejan de ser eficientes.</p>
+
+<p>Los índices de Moran y Geary se programaron a mano siguiendo las fórmulas de clase. La matriz de pesos es binaria por umbral de distancia y estandarizada por filas. Conviene advertir que el umbral cambia el resultado, así que en vez de reportar un número suelto se reportan tres, y la significancia se evalúa por permutación con 999 remuestreos.</p>
+
+<table>
+<tr><th>Percentil de distancia</th><th class="n">Umbral (km)</th><th class="n">Vecinos prom.</th><th class="n">I de Moran (precip.)</th><th class="n">I de Moran (residuales)</th><th class="n">C de Geary (residuales)</th><th class="n">valor p</th></tr>
+<tr><td>5</td><td class="n">19,7</td><td class="n">3,5</td><td class="n">0,955</td><td class="n">0,793</td><td class="n">0,187</td><td class="n">0,001</td></tr>
+<tr><td>10</td><td class="n">28,0</td><td class="n">6,9</td><td class="n">0,938</td><td class="n">0,722</td><td class="n">0,275</td><td class="n">0,001</td></tr>
+<tr><td>25</td><td class="n">48,5</td><td class="n">17,3</td><td class="n">0,812</td><td class="n">0,460</td><td class="n">0,540</td><td class="n">0,001</td></tr>
+</table>
+<p class="cap"><b>Tabla 6.</b> Autocorrelación espacial por umbral de vecindad. Bajo aleatoriedad se esperaría I = −1/(n−1) = −0,014 y C = 1.</p>
+
+<p><b>La correlación espacial importa, y bastante.</b> Después de que la regresión se llevó el 84 % de la varianza, lo que sobra <i>sigue</i> teniendo estructura espacial fuerte: con vecindad de 20 km el I de Moran de los residuales es 0,793 frente a un valor esperado de −0,014. Moran y Geary apuntan al mismo lado en las tres configuraciones (I alto acompañado de C bajo), lo que descarta un error de cálculo. El valor p de 0,001 es el mínimo alcanzable con 999 permutaciones: ninguno de los 999 reetiquetados al azar llegó al valor observado. Dicho de otra manera, un modelo de regresión por sí solo deja sobre la mesa información espacial aprovechable, y ese es justamente el hueco que llena el kriging.</p>
+
+<div class="duo">
+<div><figure><img src="../resultados/fig09_moran_scatter.png" style="width:100%"></figure></div>
+<div><figure><img src="../resultados/fig10_correlograma.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 5.</b> Izquierda: diagrama de Moran, con el residual estandarizado en el eje horizontal y el promedio de sus vecinos en el vertical; la pendiente de la recta <i>es</i> el índice. El predominio de rojos (alto rodeado de alto) y azules (bajo rodeado de bajo) sobre los grises discordantes es la autocorrelación positiva vista punto a punto. Derecha: correlograma, el resultado más informativo de esta sección. No es una curva que decae hasta cero y se queda ahí, sino <b>una onda</b>: I = +0,79 a 10 km, +0,50 a 30 km, cruza cero cerca de los 48 km, llega a −0,54 a los 89 km y vuelve a subir a +0,51 a los 149 km.</p>
+
+<p>Cada tramo del correlograma se lee sobre el mapa de residuales de la figura 4. El tramo positivo de 0 a 48 km es dependencia espacial genuina y anticipa el rango que estimará el semivariograma. El mínimo de −0,54 alrededor de los 89 km dice que dos puntos separados esa distancia tienden a tener residuales <b>de signo opuesto</b>, que es media anchura del departamento: el azul del centro del valle contra el rojo de un flanco. Y el repunte positivo hacia los 149 km es el reencuentro de los <b>dos</b> flancos entre sí, que son ambos rojos y están separados aproximadamente esa distancia.</p>
+
+<p>Ese lóbulo negativo tiene una consecuencia técnica importante: indica que los residuales <b>no son estacionarios de segundo orden</b> a gran distancia, porque todavía queda estructura determinística. Los modelos de semivariograma asumen crecimiento monótono hasta una meseta, y eso solo se cumple hasta unos 50 km. Ahí se fija el corte de la sección siguiente, con respaldo del libro del curso, que recomienda limitar la distancia máxima precisamente "en caso de que se observe un comportamiento errático a distancias mayores".</p>
+
+<h2>5. Semivariograma</h2>
+
+<p>El diagnóstico anterior obliga a revisar la tendencia. El libro del curso indica que cuando hay tendencia en los datos "esta tendencia se modela con modelos de regresión polinómicos […] y el semivariograma se construye con los residuales obtenidos", así que la curvatura detectada en la figura 4 justifica probar un término cuadrático. Se llevaron <b>las dos tendencias en paralelo</b> —lineal y con <span class="mono">I(x_km^2)</span>— y se dejó que decidiera la evidencia, en vez de elegir una por comodidad.</p>
+
+<p>Sobre el semivariograma empírico, construido agrupando los 2 415 pares en intervalos de distancia, se ajustaron por mínimos cuadrados los <b>tres</b> modelos que define el material de clase, con <span class="mono">optim()</span> y varios puntos de arranque porque no son lineales en los parámetros:</p>
+
+<div class="ec">
+γ(h) = c₀ + c₁[1,5(h/a) − 0,5(h/a)³] si h ≤ a &nbsp;&nbsp;(esférico) &nbsp;·&nbsp;
+γ(h) = c₀ + c₁[1 − e<sup>−h/a</sup>] &nbsp;(exponencial) &nbsp;·&nbsp;
+γ(h) = c₀ + c₁[1 − e<sup>−(h/a)²</sup>] &nbsp;(gaussiano)
+</div>
+
+<p>El criterio para aceptar un ajuste no es qué tan bien pega la curva, sino un supuesto teórico: bajo estacionariedad de segundo orden la <b>meseta debe aproximar la varianza del proceso</b>. Si la supera claramente, el semivariograma sigue creciendo y eso significa que quedó tendencia sin modelar.</p>
+
+<table>
+<tr><th>Tendencia</th><th>Modelo</th><th class="n">Meseta</th><th class="n">Varianza residual</th><th class="n">Razón</th><th>Veredicto</th></tr>
+<tr class="destaca"><td>cuadrática</td><td>esférico</td><td class="n">161,7</td><td class="n">158,8</td><td class="n">1,02</td><td>coherente</td></tr>
+<tr><td>cuadrática</td><td>gaussiano</td><td class="n">152,9</td><td class="n">158,8</td><td class="n">0,96</td><td>coherente</td></tr>
+<tr><td>cuadrática</td><td>exponencial</td><td class="n">285,6</td><td class="n">158,8</td><td class="n">1,80</td><td>meseta &gt; varianza</td></tr>
+<tr><td>lineal</td><td>gaussiano</td><td class="n">537,6</td><td class="n">408,4</td><td class="n">1,32</td><td>no estacionario</td></tr>
+<tr><td>lineal</td><td>esférico</td><td class="n">769,6</td><td class="n">408,4</td><td class="n">1,88</td><td>no estacionario</td></tr>
+<tr><td>lineal</td><td>exponencial</td><td class="n">1275,1</td><td class="n">408,4</td><td class="n">3,12</td><td>no estacionario</td></tr>
+</table>
+<p class="cap"><b>Tabla 7.</b> Diagnóstico de estacionariedad con corte a 50 km. La tendencia lineal falla en las tres configuraciones; la cuadrática es coherente en dos de tres.</p>
+
+<div class="duo">
+<div><figure><img src="../resultados/fig11a_variograma_lineal.png" style="width:100%"></figure></div>
+<div><figure><img src="../resultados/fig11b_variograma_cuadratica.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 6.</b> Semivariogramas empíricos con los tres modelos ajustados. Izquierda, residuales de la tendencia lineal: la curva <b>sube sin detenerse</b> y cruza la varianza muestral (línea punteada) sin formar meseta, que es la firma de libro de una tendencia mal especificada. Derecha, residuales de la tendencia cuadrática: la meseta aparece y se estabiliza justo sobre la línea de la varianza hacia los 40 km, y los tres modelos convergen. La decisión entre lineal y cuadrática deja de ser una cuestión de preferencia y pasa a ser evidencia propia.</p>
+
+<h2>6. Validación</h2>
+
+<p>El ajuste del variograma no basta para elegir el modelo de covarianza. Se hizo <b>validación cruzada dejando uno afuera</b> sobre las seis combinaciones de tendencia y modelo, reestimando en cada iteración tanto la regresión como el sistema de kriging con las 69 estaciones restantes. Para el kriging se usó la relación general C(h) = meseta − γ(h) en lugar de la forma exponencial de los scripts, que solo es correcta cuando no hay efecto pepita, y los pesos se obtienen resolviendo el sistema con multiplicador de Lagrange que impone que sumen 1.</p>
+
+<table>
+<tr><th>Tendencia</th><th>Modelo</th><th class="n">RMSE sin kriging</th><th class="n">RMSE con kriging</th><th class="n">Mejora</th><th class="n">MAE</th><th class="n">R² CV</th><th class="n">sd(z)</th><th class="n">κ(A)</th></tr>
+<tr><td>lineal</td><td>exponencial</td><td class="n">21,32</td><td class="n">7,09</td><td class="n">66,7 %</td><td class="n">5,29</td><td class="n">0,981</td><td class="n">0,69</td><td class="n">7,7e6</td></tr>
+<tr><td>lineal</td><td>esférico</td><td class="n">21,32</td><td class="n">7,15</td><td class="n">66,5 %</td><td class="n">5,30</td><td class="n">0,980</td><td class="n">0,73</td><td class="n">1,1e6</td></tr>
+<tr><td>cuadrática</td><td>exponencial</td><td class="n">14,02</td><td class="n">8,72</td><td class="n">37,8 %</td><td class="n">5,54</td><td class="n">0,971</td><td class="n">1,01</td><td class="n">1,7e5</td></tr>
+<tr class="destaca"><td>cuadrática</td><td>esférico</td><td class="n">14,02</td><td class="n">8,86</td><td class="n">36,8 %</td><td class="n">5,53</td><td class="n">0,970</td><td class="n">1,06</td><td class="n">1,0e4</td></tr>
+<tr><td>cuadrática</td><td>gaussiano</td><td class="n">14,02</td><td class="n">23,16</td><td class="n">−65,3 %</td><td class="n">15,68</td><td class="n">0,793</td><td class="n">18,61</td><td class="n">1,2e5</td></tr>
+<tr><td>lineal</td><td>gaussiano</td><td class="n">21,32</td><td class="n">160,29</td><td class="n">−651,9 %</td><td class="n">80,95</td><td class="n">−8,897</td><td class="n">339,0</td><td class="n">1,2e8</td></tr>
+</table>
+<p class="cap"><b>Tabla 8.</b> Validación cruzada leave-one-out, 70 iteraciones por fila. <i>sd(z)</i> es la desviación del error estandarizado (obs − pred)/√(varianza de kriging): si la varianza de kriging está bien calibrada debe rondar 1. κ(A) es el número de condición de la matriz de kriging.</p>
+
+<p>La columna "RMSE sin kriging" responde la pregunta del enunciado en términos de predicción: pasar de 14,02 a 8,86 mm es una <b>mejora del 37 %</b> que se obtiene únicamente explotando la correlación espacial del residuo, sin agregar ninguna variable nueva. Con la tendencia lineal la mejora aparente es aún mayor, del 67 %, pero en ese caso el kriging está compensando una tendencia mal especificada, que es un mérito prestado.</p>
+
+<p>La tabla también deja ver dos trampas. La primera es el <b>modelo gaussiano</b>, que ajusta muy bien el semivariograma empírico y sin embargo destroza la predicción: su matriz de kriging queda casi singular (autovalor mínimo del orden de 10⁻⁵ frente a 9,1 del esférico) y los pesos se disparan hasta dar un R² de −8,9. Ajustar mejor el variograma no es lo mismo que predecir mejor. La segunda es que <b>el menor RMSE no es la mejor opción</b>. Por eso la selección se hizo con tres filtros simultáneos, no con uno:</p>
+
+<ul>
+<li><b>Estacionariedad</b>: la razón meseta/varianza debe estar cerca de 1, según la definición del libro.</li>
+<li><b>Calibración</b>: sd(z) entre 0,80 y 1,25, o el mapa de incertidumbre no significa nada.</li>
+<li><b>Estabilidad</b>: número de condición acotado, para que los pesos no exploten.</li>
+</ul>
+
+<p>Exactamente <b>una</b> combinación pasa las tres: tendencia cuadrática con semivariograma esférico. La alternativa de menor error, lineal con exponencial, baja el RMSE a 7,09 mm pero su meseta triplica la varianza y su sd(z) de 0,69 haría que el mapa de incertidumbre exagerara la precisión en un 45 %. Se descarta con argumento, no por gusto. El modelo final queda con <b>pepita 0, meseta 161,7 mm² y rango 56,1 km</b>, y rinde RMSE 8,86 mm, MAE 5,53 mm, R² de validación 0,970 y sd(z) = 1,06.</p>
+
+<div class="duo">
+<div class="ancha"><figure><img src="../resultados/fig12_validacion_cruzada.png" style="width:100%"></figure></div>
+<div class="angosta"><figure><img src="../resultados/fig13_mapa_error_loocv.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 7.</b> Izquierda: diagnóstico de la validación cruzada. Los puntos se alinean sobre la diagonal, los residuos de validación no muestran patrón contra el valor predicho, y el Q-Q del error estandarizado sigue la recta con desviación 1,06, lo que confirma que la varianza de kriging está bien calibrada y por lo tanto el mapa de incertidumbre es interpretable. Derecha: el error de validación sobre el mapa. A diferencia de los residuales de la tendencia (figura 4), aquí los colores <b>ya no forman manchas</b>: el kriging absorbió la estructura espacial que la regresión había dejado suelta. Es la confirmación visual de que cumplió su función.</p>
+
+<h2>7. Predicción</h2>
+
+<p>Con el modelo seleccionado se predijo sobre las 688 celdas del departamento, sumando la tendencia estimada y el kriging del residuo. El resultado se contrasta contra el valor real de CHIRPS en cada celda, que actúa como verdad de referencia.</p>
+
+<table>
+<tr><th>Conjunto de evaluación</th><th class="n">Celdas</th><th class="n">RMSE (mm)</th><th class="n">R²</th><th>Lectura</th></tr>
+<tr><td>LOOCV sobre las estaciones</td><td class="n">70</td><td class="n">8,86</td><td class="n">0,970</td><td>desempeño en puntos conocidos</td></tr>
+<tr class="destaca"><td>Celdas sin estación</td><td class="n">620</td><td class="n">10,79</td><td class="n">0,950</td><td>el número honesto</td></tr>
+<tr><td>Celdas con estación</td><td class="n">68</td><td class="n">2,09</td><td class="n">—</td><td>no es mérito: con pepita 0 el kriging interpola exacto</td></tr>
+</table>
+<p class="cap"><b>Tabla 9.</b> Tres niveles de evaluación. Las 70 estaciones ocupan 68 celdas distintas porque dos cayeron dentro de la misma.</p>
+
+<p>El número que vale es el de las 620 celdas no muestreadas: <b>RMSE de 10,79 mm y R² de 0,950</b> reconstruyendo el mapa completo a partir de 70 puntos, sobre un rango observado de 34,9 a 224,8 mm. La predicción cubre de 34,6 a 223,2 mm con media 88,9 frente a 90,1 observada, un sesgo del −1,4 % que es despreciable frente al error. Los 2,09 mm de las celdas con estación no hay que celebrarlos: con pepita cero el kriging está obligado a interpolar exacto en los puntos observados, de modo que ese número mide una propiedad del método y no su capacidad predictiva.</p>
+
+<div class="duo">
+<div><figure><img src="../resultados/fig17_observado_vs_estimado.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 8.</b> A la izquierda el campo CHIRPS observado y a la derecha el reconstruido por kriging universal desde solo 70 estaciones, en la misma escala de color. Se recuperan el gradiente occidente-oriente, la posición del máximo en la vertiente pacífica y las magnitudes; el mapa estimado es algo más suave, que es exactamente lo que se espera de un interpolador óptimo en media cuadrática.</p>
+
+<div class="duo">
+<div class="angosta"><figure><img src="../resultados/fig15_mapa_incertidumbre.png" style="width:100%"></figure></div>
+<div class="ancha"><figure><img src="../resultados/fig16_descomposicion.png" style="width:100%"></figure></div>
+</div>
+<p class="cap"><b>Figura 9.</b> Izquierda: desviación estándar de kriging. Se comporta como manda la teoría — mínima sobre las estaciones (1,1 mm), creciente con la distancia al dato más cercano y máxima en los bordes y en los huecos sin muestrear (12,6 mm en el filo oriental, la punta norte y la cintura del departamento). Este mapa solo es legible porque sd(z) = 1,06; con el modelo de menor RMSE habría exagerado la precisión. Derecha: la respuesta gráfica al enunciado. (A) es lo que aporta la tendencia determinística y (B) lo que agrega el kriging del residuo. El panel B <b>no es ruido</b>: tiene estructura espacial organizada, y esa estructura es precisamente "el papel de la correlación espacial" que había que evaluar.</p>
+
+<h2>8. Conclusiones y limitaciones</h2>
+
+<p>La correlación espacial no es un adorno del modelo, es la mitad del modelo. La regresión sobre posición y altitud explica el 84 % de la varianza, pero lo que deja sin explicar conserva una autocorrelación fuerte y significativa (I de Moran 0,79 sobre los residuales, p = 0,001), y aprovecharla con kriging reduce el error de predicción en un 37 %, de 14,02 a 8,86 mm. Sobre el mapa completo, el modelo reconstruye la precipitación de 620 celdas nunca observadas con un R² de 0,950 partiendo de 70 puntos.</p>
+
+<p>Hay tres resultados que conviene destacar por encima de las cifras. El primero es la <b>confusión entre altitud y longitud</b>: la altitud parece secar el territorio cuando se la mira sola y en realidad lo humedece una vez se controla la posición. El segundo es que <b>ajustar mejor el variograma no es predecir mejor</b>, como demostró el modelo gaussiano. Y el tercero es que <b>el menor RMSE no siempre es la mejor decisión</b>: la combinación más precisa en validación era inadmisible por no estacionaria y mal calibrada, y elegirla habría producido un mapa de incertidumbre engañoso.</p>
+
+<p>Sobre las limitaciones, hay cuatro que este trabajo asume y prefiere declarar antes que esconder. Las 688 celdas provienen de un producto grillado, no de estaciones meteorológicas reales, de modo que el R² de validación mide <b>capacidad de reconstrucción</b> del campo CHIRPS y no destreza frente a observaciones independientes. El efecto de la altitud no es homogéneo en el espacio —negativo en la vertiente pacífica, positivo en las laderas interiores— y lo correcto sería una interacción altitud × longitud, que se omitió por mantenerse dentro de las metodologías vistas en clase. El correlograma muestra que los residuales no son estacionarios de segundo orden más allá de unos 50 km, lo que obligó a limitar el corte del variograma y deja fuera del modelo la estructura de gran escala restante. Y el análisis es de una sola semana: la semana 44 se eligió por ser la más lluviosa del año promedio, pero los parámetros del variograma bien podrían cambiar en la temporada seca.</p>
+
+<h2>Referencias</h2>
+<div class="refs">
+<p>Farr, T. G., <i>et al.</i> (2007). The Shuttle Radar Topography Mission. <i>Reviews of Geophysics</i>, 45(2).</p>
+<p>Funk, C., Peterson, P., Landsfeld, M., <i>et al.</i> (2015). The climate hazards infrared precipitation with stations: a new environmental record for monitoring extremes. <i>Scientific Data</i>, 2, 150066.</p>
+<p>GADM (2022). <i>Database of Global Administrative Areas</i>, versión 4.1. Límite departamental del Valle del Cauca.</p>
+<p>Giraldo Henao, R. <i>Geoestadística: datos espaciales, espacio-temporales y funcionales</i>. Universidad Nacional de Colombia. Material del curso.</p>
+<p>Hijmans, R. J. (2025). <i>terra: Spatial Data Analysis</i>. Paquete de R.</p>
+<p>NASA Langley Research Center (2025). <i>POWER Project: Prediction of Worldwide Energy Resources</i>, datos meteorológicos y de radiación solar.</p>
+<p>Ospina, J. A. (2026). <i>Lecture on Spatial Statistics</i>; <i>Class 5: Handle Spatial Data</i>; <i>Practice Geostatistics, Ejemplos 1 a 4</i>; <i>Script Spatial Analytics</i>. Material de clase, Analítica de Datos 2026-2S, Universidad Autónoma de Occidente.</p>
+<p>R Core Team (2025). <i>R: A Language and Environment for Statistical Computing</i>. R Foundation for Statistical Computing, Viena.</p>
+</div>
+
+</body>
+</html>

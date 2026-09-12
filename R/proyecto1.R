@@ -1,587 +1,1255 @@
 ################################################################################
 # UNIVERSIDAD AUTONOMA DE OCCIDENTE
-# FACULTAD DE INGENIERIA Y CIENCIAS BASICAS
-# PROGRAMA: INGENIERIA DE DATOS E INTELIGENCIA ARTIFICIAL
-# ASIGNATURA: ANALITICA DE DATOS (2026-2S)
-# PROFESOR: JOHANN A. OSPINA
+# Facultad de Ingenieria - Ingenieria de Datos e Inteligencia Artificial
+# Analitica de Datos (2026-2S) - Prof. Johann A. Ospina
 #
-# PROYECTO NO. 1
-# Modelamiento de la precipitacion semanal en el Valle del Cauca en funcion de
-# covariables ambientales y evaluacion del papel de la correlacion espacial.
+# PROYECTO 1
+# Modelamiento de la precipitacion semanal en el Valle del Cauca
+# y evaluacion del papel de la correlacion espacial.
 #
-# INTEGRANTES:
-# - Juan Pablo Maya          - Codigo: 2236377
-# - Cesar Armando Reyes      - Codigo: 2236379
-# - Yesenia Diaz Urrego      - Codigo: 2231783
+# Autor: Cesar Armando Reyes Oliveros - 2236379
 #
-# Script unico, independiente y 100% reproducible.
-# Utiliza unicamente las metodologias y librerias trabajadas en clase (terra,
-# sp, gstat, ggplot2, gridExtra, corrplot y algebra matricial de R base).
+# Script unico y reproducible. Solo `terra` (libreria de clase, Script_Class5.R)
+# y funciones base de R.
 ################################################################################
 
-# Limpieza del entorno y configuracion de reproducibilidad
 rm(list = ls())
 set.seed(2026)
-options(digits = 4, scipen = 999)
+options(scipen = 999)
 
-# ==============================================================================
-# 0. CARGA DE LIBRERIAS PERMITIDAS Y CONFIGURACION DE RUTAS
-# ==============================================================================
-paquetes_requeridos <- c("terra", "sp", "gstat", "ggplot2", "gridExtra", "corrplot")
-paquetes_instalados <- rownames(installed.packages())
+library(terra)
 
-for (p in paquetes_requeridos) {
-  if (!(p %in% paquetes_instalados)) {
-    install.packages(p, repos = "https://cloud.r-project.org")
-  }
-  library(p, character.only = TRUE)
-}
-
-# Definicion flexible de rutas para compatibilidad tanto desde la raiz como desde /R
+# Rutas relativas a la raiz del proyecto -> el script corre con
+#   Rscript R/proyecto1.R   desde /Proyecto1_Analitic
 DIR_DATOS <- "data/datos_proyecto_1/imagenes_semanales"
-if (!dir.exists(DIR_DATOS)) {
-  DIR_DATOS <- "datos_proyecto_1/datos_proyecto_1/imagenes_semanales"
-}
-if (!dir.exists(DIR_DATOS)) {
-  # Busqueda recursiva
-  tifs <- list.files(pattern = "altitud_valle\\.tif$", recursive = TRUE, full.names = TRUE)
-  if (length(tifs) > 0) DIR_DATOS <- dirname(tifs[1])
-}
-
 DIR_SALIDA <- "resultados"
 if (!dir.exists(DIR_SALIDA)) dir.create(DIR_SALIDA, recursive = TRUE)
 
-DIR_FIGURAS <- "figuras"
-if (!dir.exists(DIR_FIGURAS)) dir.create(DIR_FIGURAS, recursive = TRUE)
+# Reproducibilidad: los .tif no se versionan (son derivados). Si no estan,
+# se extraen del zip original, que si esta en el repo.
+if (!dir.exists(DIR_DATOS)) {
+  zip_datos <- "data/datos_proyecto_1.zip"
+  if (!file.exists(zip_datos)) stop("No se encuentra ", zip_datos)
+  cat("Descomprimiendo el dataset original...\n")
+  unzip(zip_datos, exdir = "data")
+}
+stopifnot(dir.exists(DIR_DATOS))
 
-# Helper para exportar figuras de forma simultanea a pantalla y archivo PNG (300 DPI)
-guardar_figura <- function(nombre, expr, ancho = 2400, alto = 1600, res = 300) {
-  bloque <- substitute(expr)
-  entorno <- parent.frame()
-  eval(bloque, entorno) # Muestra en el panel de RStudio / dispositivo activo
-  
-  # Guardar en resultados/ y figuras/
-  rutas <- c(file.path(DIR_SALIDA, nombre), file.path(DIR_FIGURAS, nombre))
-  for (r in unique(rutas)) {
-    tryCatch({
-      if (file.exists(r)) suppressWarnings(unlink(r, force = TRUE))
-      png(r, width = ancho, height = alto, res = res)
-      eval(bloque, entorno)
-      dev.off()
-    }, error = function(e) {
-      suppressWarnings(try(dev.off(), silent = TRUE))
-      # Intento alternativo con ragg o cairo si falla el default
-      tryCatch({
-        png(r, width = ancho, height = alto, res = res, type = "cairo")
-        eval(bloque, entorno)
-        dev.off()
-      }, error = function(e2) {
-        warning(sprintf("No se pudo guardar la figura en %s: %s", r, e2$message))
-      })
-    })
-  }
-  cat(sprintf("  [Figura generada] %s\n", nombre))
+
+# ---- Helper de figuras ------------------------------------------------------
+# Problema: si solo se llama plot(), la figura vive en el panel de RStudio y se
+# pierde. Si solo se llama png()/dev.off(), va al archivo pero no se ve.
+# Esta funcion hace las dos cosas: evalua el mismo bloque de dibujo dos veces,
+# una contra la pantalla y otra contra el PNG.
+#
+# Uso:
+#   figura("fig02_borde.png", {
+#     plot(precip)
+#     plot(borde, add = TRUE)
+#   })
+
+figura <- function(nombre, expr, ancho = 2000, alto = 1800, res = 300) {
+  bloque <- substitute(expr)          # captura el codigo SIN ejecutarlo
+  entorno <- parent.frame()           # ...para correrlo donde fue escrito
+
+  eval(bloque, entorno)               # 1) a la pantalla
+
+  ruta <- file.path(DIR_SALIDA, nombre)
+  png(ruta, width = ancho, height = alto, res = res)
+  eval(bloque, entorno)               # 2) al archivo
+  dev.off()
+
+  cat(sprintf("  [figura] %s\n", ruta))
+  invisible(ruta)
 }
 
-cat("====================================================================\n")
-cat(" PROYECTO 1: MODELAMIENTO GEOESTADISTICO DE PRECIPITACION (VALLE)   \n")
-cat(" Integrantes:\n")
-cat("  - Juan Pablo Maya     (2236377)\n")
-cat("  - Cesar Armando Reyes (2236379)\n")
-cat("  - Yesenia Diaz Urrego (2231783)\n")
-cat("====================================================================\n\n")
 
-# ==============================================================================
-# 1. AUDITORIA, CARGA Y ALINEACION DE DATOS RASTER
-# ==============================================================================
-cat("[Paso 1] Cargando capas raster y auditando geometria...\n")
+################################################################################
+# PASO 1. AUDITORIA DE LOS DATOS
+#
+# Antes de modelar hay que saber que hay. No se asume nada del enunciado:
+# se verifica la geometria, la cobertura real y los valores centinela.
+################################################################################
 
-r_altitud     <- rast(file.path(DIR_DATOS, "altitud_valle.tif"))
-r_precip_clim <- rast(file.path(DIR_DATOS, "chirps_climatologia_semanal_valle.tif"))
-r_temp_clim   <- rast(file.path(DIR_DATOS, "power_temp_climatologia_semanal_valle.tif"))
-r_rad_clim    <- rast(file.path(DIR_DATOS, "power_radiacion_climatologia_semanal_valle.tif"))
+cat("\n================ PASO 1: AUDITORIA DE LOS DATOS ================\n\n")
 
-# Limpieza de centinelas negativos en precipitacion
-r_precip_clim[r_precip_clim < 0] <- NA
+# ---- Helper de mapas --------------------------------------------------------
+# plot() sobre un SpatVector ajusta la region de dibujo al poligono exacto y no
+# deja margen: cualquier legend() se sale del area y se corta. Este helper abre
+# un lienzo vacio con espacio extra abajo y dibuja el borde encima.
 
-# Mascara oficial del departamento del Valle del Cauca (SRTM y CHIRPS validos)
-mascara_valle <- (!is.na(r_altitud)) & (r_altitud >= -5)
-
-# Borde poligonal oficial del departamento (metodologia Ejemplo4_Geoestadistica.R)
-borde_valle <- as.polygons(mascara_valle, dissolve = TRUE)
-borde_valle <- borde_valle[borde_valle[[1]] == 1, ]
-
-# Seleccion de la semana de estudio: Semana 42 (Pico de lluvias de Octubre en el Valle)
-SEMANA <- 42
-
-# Alineacion e interpolacion de covariables gruesas a la grilla fina de CHIRPS
-alinear_covariable <- function(r_layer, mask_base) {
-  pts <- as.points(r_layer, na.rm = TRUE)
-  if (nrow(pts) == 0) return(r_layer)
-  r_idw <- interpIDW(mask_base, pts, field = names(r_layer), radius = 2.5, power = 2)
-  mask(r_idw, mask_base)
+mapa_base <- function(borde, titulo, ...) {
+  plot(borde, border = "grey40", las = 1, main = titulo,
+       xlab = "Longitud", ylab = "Latitud", ...)
 }
 
-p_lluvias <- mask(r_precip_clim[[SEMANA]], mascara_valle)
-t_lluvias <- alinear_covariable(r_temp_clim[[SEMANA]], mascara_valle)
-rad_lluvias <- alinear_covariable(r_rad_clim[[SEMANA]], mascara_valle)
-alt_valle <- mask(r_altitud, mascara_valle)
+# terra::plot deja el area de dibujo pegada al borde del poligono, asi que
+# legend("topleft") se recorta por arriba. Esta funcion devuelve un punto
+# seguro dentro del hueco del noroeste del departamento.
+# OJO: as.vector(ext()) devuelve un vector CON NOMBRES (xmin, xmax, ymin, ymax).
+# Sin unname(), c(x = e[1], ...) produce el nombre "x.xmin" y lg["x"] da NA;
+# legend(NA, NA, ...) no dibuja nada y no lanza ningun error.
+esquina_leyenda <- function(borde, baja = 0.08) {
+  e <- unname(as.vector(ext(borde)))
+  c(x = e[1], y = e[4] - baja * (e[4] - e[3]))
+}
 
-# Extraccion de la tabla de celdas completas del departamento
-coords_all <- crds(alt_valle, na.rm = TRUE)
-df_grilla_valle <- data.frame(
-  id = 1:nrow(coords_all),
-  lon = coords_all[, 1],
-  lat = coords_all[, 2],
-  altitud = extract(alt_valle, coords_all)[, 1],
-  precip = extract(p_lluvias, coords_all)[, 1],
-  temp = extract(t_lluvias, coords_all)[, 1],
-  rad = extract(rad_lluvias, coords_all)[, 1]
+
+# ---- 1.1 Carga de las capas -------------------------------------------------
+# Climatologia = promedio historico 2010-2025 por semana ISO (52 bandas).
+# Se usa la climatologia y no un anio suelto para que la senal espacial no
+# quede dominada por el ruido de un evento particular.
+
+r_precip <- rast(file.path(DIR_DATOS, "chirps_climatologia_semanal_valle.tif"))
+r_temp   <- rast(file.path(DIR_DATOS, "power_temp_climatologia_semanal_valle.tif"))
+r_rad    <- rast(file.path(DIR_DATOS, "power_radiacion_climatologia_semanal_valle.tif"))
+r_alt    <- rast(file.path(DIR_DATOS, "altitud_valle.tif"))
+
+
+# ---- 1.2 Verificacion de la geometria comun ---------------------------------
+# El enunciado afirma que todas las capas comparten grilla. Se comprueba:
+# si no fuera cierto, no se podrian cruzar pixel a pixel.
+
+geometria <- function(r) {
+  e <- as.vector(ext(r))
+  c(filas = nrow(r), cols = ncol(r), bandas = nlyr(r),
+    res = unname(res(r)[1]),
+    xmin = unname(e[1]), xmax = unname(e[2]),
+    ymin = unname(e[3]), ymax = unname(e[4]))
+}
+
+tabla_geom <- rbind(
+  Precipitacion = geometria(r_precip),
+  Temperatura   = geometria(r_temp),
+  Radiacion     = geometria(r_rad),
+  Altitud       = geometria(r_alt)
 )
-df_grilla_valle <- na.omit(df_grilla_valle)
 
-# Proyeccion a coordenadas planas locales en kilometros (centradas en el baricentro)
-lat0 <- mean(df_grilla_valle$lat)
-lon0 <- mean(df_grilla_valle$lon)
+cat("--- 1.2 Geometria de las capas ---\n")
+print(tabla_geom)
 
-df_grilla_valle$x_km <- (df_grilla_valle$lon - lon0) * 111.320 * cos(lat0 * pi / 180)
-df_grilla_valle$y_km <- (df_grilla_valle$lat - lat0) * 110.574
+# Prueba formal: todas las filas de geometria (menos el numero de bandas)
+# deben ser identicas a la primera.
+cols_comparables <- setdiff(colnames(tabla_geom), "bandas")
+grilla_comun <- all(apply(tabla_geom[, cols_comparables], 2,
+                          function(x) all(abs(x - x[1]) < 1e-9)))
+cat(sprintf("\nGrilla comun a las cuatro capas: %s\n", ifelse(grilla_comun, "SI", "NO")))
+cat(sprintf("Pixeles por banda: %d x %d = %d\n",
+            nrow(r_precip), ncol(r_precip), ncell(r_precip)))
+cat(sprintf("Tamano de pixel: %.3f grados (~%.1f km)\n",
+            res(r_precip)[1], res(r_precip)[1] * 111.32))
 
-cat(sprintf("  -> Total celdas validas en el Valle del Cauca: %d\n", nrow(df_grilla_valle)))
 
-# ==============================================================================
-# 2. MUESTREO ESPACIAL REPRESENTATIVO (ESTACIONES OBSERVADAS)
-# ==============================================================================
-cat("\n[Paso 2] Muestreo espacial de estaciones de entrenamiento...\n")
+# ---- 1.3 Valores centinela --------------------------------------------------
+# CHIRPS codifica "sin dato" como -9999 / -69993 en vez de NA. Si no se
+# limpian, cualquier media queda destruida.
 
-n_muestra <- 70
+v_precip_crudo <- values(r_precip)
+v_precip_crudo <- v_precip_crudo[!is.na(v_precip_crudo)]
+
+cat("\n--- 1.3 Valores centinela en CHIRPS ---\n")
+cat(sprintf("Minimo crudo observado en todas las bandas: %.1f\n", min(v_precip_crudo)))
+cat(sprintf("Celdas con valor negativo (imposible en lluvia): %d\n",
+            sum(v_precip_crudo < 0)))
+
+# Regla de limpieza: la precipitacion es una cantidad no negativa.
+# Todo valor < 0 es centinela, no dato.
+r_precip[r_precip < 0] <- NA
+
+cat(sprintf("Minimo despues de la limpieza: %.2f mm\n",
+            min(values(r_precip), na.rm = TRUE)))
+
+
+# Semana usada solo para los diagnosticos de cobertura de este paso.
+# La semana definitiva de trabajo se elige con evidencia en 1.6.
+SEMANA_DIAG <- 42
+
+# ---- 1.4 Mascara del area de estudio ----------------------------------------
+# El rectangulo de 1443 pixeles no es el departamento: incluye oceano Pacifico
+# y territorio vecino. El area de estudio son las celdas con altitud valida
+# (SRTM solo trae tierra firme) Y con precipitacion valida.
+# Este es el denominador honesto para medir cobertura.
+
+mascara <- !is.na(r_alt) & !is.na(r_precip[[SEMANA_DIAG]])
+N_VALLE <- sum(values(mascara), na.rm = TRUE)
+
+cat("\n--- 1.4 Mascara del area de estudio ---\n")
+cat(sprintf("Celdas del rectangulo:        %d\n", ncell(r_alt)))
+cat(sprintf("Celdas del area de estudio:   %d (%.1f%% del rectangulo)\n",
+            N_VALLE, 100 * N_VALLE / ncell(r_alt)))
+
+
+# ---- 1.5 Cobertura efectiva de cada variable --------------------------------
+# "Misma grilla" no implica "misma cantidad de dato". NASA POWER es nativo
+# 0.5 grados y CHIRPS 0.05 grados: al llevar POWER a la grilla fina, solo los
+# centros originales quedaron con valor. Se mide DENTRO del area de estudio.
+
+cobertura <- function(r, banda = 1) {
+  v <- values(mask(r[[banda]], mascara, maskvalues = c(FALSE, NA)))
+  v <- v[!is.na(v)]
+  c(celdas_con_dato = length(v),
+    pct_area = 100 * length(v) / N_VALLE,
+    valores_unicos = length(unique(round(v, 6))))
+}
+
+tabla_cob <- rbind(
+  Precipitacion = cobertura(r_precip, SEMANA_DIAG),
+  Altitud       = cobertura(r_alt,    1),
+  Temperatura   = cobertura(r_temp,   SEMANA_DIAG),
+  Radiacion     = cobertura(r_rad,    SEMANA_DIAG)
+)
+
+cat(sprintf("\n--- 1.5 Cobertura efectiva dentro del area (semana %d) ---\n", SEMANA_DIAG))
+print(round(tabla_cob, 2))
+
+write.csv(data.frame(Variable = rownames(tabla_cob), round(tabla_cob, 2)),
+          file.path(DIR_SALIDA, "tabla_cobertura_variables.csv"), row.names = FALSE)
+
+
+# ---- 1.5b Criterio de seleccion de covariables ------------------------------
+# Una covariable entra al modelo solo si describe el area completa y tiene
+# variabilidad real. Dos filtros, ambos necesarios:
+#   (a) cobertura >= 90% del area de estudio  -> no hay que inventar dato
+#   (b) mas de 10 valores distintos           -> es un gradiente, no un escalon
+
+UMBRAL_PCT <- 90
+UMBRAL_UNICOS <- 10
+
+decision <- ifelse(tabla_cob[, "pct_area"] >= UMBRAL_PCT &
+                   tabla_cob[, "valores_unicos"] > UMBRAL_UNICOS,
+                   "SE USA", "SE DESCARTA")
+
+cat("\n--- 1.5b Decision sobre covariables ---\n")
+print(data.frame(Variable = rownames(tabla_cob),
+                 Pct_area = round(tabla_cob[, "pct_area"], 1),
+                 Valores_unicos = tabla_cob[, "valores_unicos"],
+                 Decision = decision, row.names = NULL))
+
+
+# ---- 1.6 Eleccion de la semana de estudio -----------------------------------
+# No se asume cual es la semana lluviosa: se calcula el promedio espacial de
+# cada una de las 52 semanas y se toma el maximo.
+
+media_semanal <- sapply(1:nlyr(r_precip),
+                        function(k) mean(values(r_precip[[k]]), na.rm = TRUE))
+
+SEMANA <- which.max(media_semanal)
+
+cat("\n--- 1.6 Ciclo anual de precipitacion ---\n")
+cat(sprintf("Semana mas lluviosa (climatologia 2010-2025): %d (%.1f mm)\n",
+            SEMANA, media_semanal[SEMANA]))
+cat(sprintf("Semana mas seca: %d (%.1f mm)\n",
+            which.min(media_semanal), min(media_semanal)))
+
+figura("fig01_ciclo_anual.png", {
+  par(mar = c(4.5, 4.5, 3, 1))
+  plot(1:52, media_semanal, type = "o", pch = 19, cex = 0.6, col = "#08519c",
+       xlab = "Semana ISO", ylab = "Precipitacion media del departamento (mm)",
+       main = "Ciclo anual de precipitacion - Valle del Cauca (CHIRPS 2010-2025)",
+       las = 1, cex.main = 0.95)
+  abline(v = SEMANA, col = "red", lty = 2, lwd = 2)
+  text(SEMANA, media_semanal[SEMANA], labels = paste0("  Semana ", SEMANA),
+       pos = 4, col = "red", cex = 0.8)
+  grid(col = "grey85")
+}, ancho = 2000, alto = 1100)
+
+cat(sprintf("\n[OK] Paso 1 terminado. Semana de trabajo fijada en %d.\n", SEMANA))
+
+
+################################################################################
+# PASO 2. PUNTOS DE MUESTREO
+#
+# El molde del curso (Ejemplo4_Geoestadistica.R, lineas 21-35) construye el
+# borde real del area a partir de la mascara y sortea puntos dentro de el.
+################################################################################
+
+cat("\n================ PASO 2: PUNTOS DE MUESTREO ================\n\n")
+
+# ---- 2.1 Borde real del departamento ----------------------------------------
+# as.polygons() convierte los pixeles TRUE de la mascara en un poligono.
+# Devuelve DOS poligonos: el de los TRUE (atributo 1) y el de los FALSE (0).
+# Hay que quedarse con el 1; si no, el "borde" incluye el oceano Pacifico.
+
+# CHIRPS tiene 787 celdas con dato y SRTM 688: CHIRPS desborda el departamento
+# y cubre mar abierto. Sin recortar, el mapa pinta lluvia sobre el Pacifico.
+# maskvalues = c(FALSE, NA) deja fuera tanto los FALSE como los NA de la mascara.
+precip <- mask(r_precip[[SEMANA]], mascara, maskvalues = c(FALSE, NA))
+
+cat(sprintf("Celdas de CHIRPS antes del recorte: %d\n",
+            sum(!is.na(values(r_precip[[SEMANA]])))))
+cat(sprintf("Celdas tras recortar al area de estudio: %d\n",
+            sum(!is.na(values(precip)))))
+
+borde <- as.polygons(mascara, dissolve = TRUE)
+borde <- borde[borde[[1]] == 1, ]
+
+cat(sprintf("Poligonos devueltos por as.polygons(): %d\n", nrow(as.polygons(mascara, dissolve = TRUE))))
+# Area por conteo de celdas: expanse() no aparece en los scripts de clase.
+# Cada celda mide res_lon*111.320*cos(lat) por res_lat*110.574 kilometros.
+lat_media <- mean(as.vector(ext(borde))[3:4])
+area_celda <- (res(r_alt)[1] * 111.320 * cos(lat_media * pi / 180)) *
+              (res(r_alt)[2] * 110.574)
+cat(sprintf("Area del borde conservado: %.0f km2 (%d celdas x %.1f km2)\n",
+            N_VALLE * area_celda, N_VALLE, area_celda))
+
+figura("fig02_borde_valle.png", {
+  par(mar = c(4, 4, 3, 4))
+  plot(precip, main = "Precipitacion semana 44 (mm) - Valle del Cauca",
+       xlab = "Longitud", ylab = "Latitud", las = 1)
+  plot(borde, add = TRUE, border = "black", lwd = 1.5)
+}, ancho = 1800, alto = 1900)
+
+
+# ---- 2.2 Sorteo de puntos de observacion ------------------------------------
+# Se simula una red de estaciones sorteando celdas dentro del borde.
+# Mismo procedimiento de Ejemplo4_Geoestadistica.R (lineas 29-35).
+#
+# Por que no usar las 688 celdas:
+#   (a) el sistema kriging invierte una matriz (n+1)x(n+1) por cada punto
+#       predicho y por cada iteracion del LOOCV; con n=688 es inviable;
+#   (b) un semivariograma modela un proceso muestreado en estaciones. Con las
+#       688 celdas ya se tiene el mapa y no hay nada que interpolar.
+
 set.seed(2026)
-idx_muestra <- sample(1:nrow(df_grilla_valle), size = n_muestra, replace = FALSE)
-datos_obs <- df_grilla_valle[idx_muestra, ]
-rownames(datos_obs) <- NULL
+n_puntos <- 70
 
-cat(sprintf("  -> %d estaciones seleccionadas para modelamiento y validacion.\n", nrow(datos_obs)))
+puntos <- spatSample(borde, size = n_puntos, method = "random")
 
-# ==============================================================================
-# 3. ANALISIS EXPLORATORIO DE DATOS ESPACIALES (ESDA)
-# ==============================================================================
-cat("\n[Paso 3] Ejecutando Analisis Exploratorio de Datos Espaciales (ESDA)...\n")
+datos <- data.frame(
+  lon     = crds(puntos)[, 1],
+  lat     = crds(puntos)[, 2],
+  precip  = extract(precip, puntos)[, 2],   # [,2] porque extract() antepone ID
+  altitud = extract(r_alt,  puntos)[, 2]
+)
+datos <- na.omit(datos)
 
-resumen_p <- summary(datos_obs$precip)
-sd_p <- sd(datos_obs$precip)
-cv_p <- (sd_p / mean(datos_obs$precip)) * 100
-shapiro_p <- shapiro.test(datos_obs$precip)
+# Proyeccion a km. El variograma mide semivarianza contra DISTANCIA, y un grado
+# de longitud no vale lo mismo que uno de latitud:
+#   1 grado de latitud  = 110.574 km (constante)
+#   1 grado de longitud = 111.320 km * cos(latitud)
+lat0 <- mean(datos$lat)
+lon0 <- mean(datos$lon)
+datos$x_km <- (datos$lon - lon0) * 111.320 * cos(lat0 * pi / 180)
+datos$y_km <- (datos$lat - lat0) * 110.574
 
-cat("--- Estadistica Descriptiva de Precipitacion (Semana 42) ---\n")
-print(resumen_p)
-cat(sprintf("Desviacion Estandar: %.2f mm\n", sd_p))
-cat(sprintf("Coeficiente de Variacion (CV): %.2f %%\n", cv_p))
-cat(sprintf("Prueba de Normalidad (Shapiro-Wilk): W = %.4f, p = %.4e\n", 
-            shapiro_p$statistic, shapiro_p$p.value))
+n <- nrow(datos)
+cat(sprintf("\nEstaciones simuladas: %d\n", n))
+cat(sprintf("Pares para el semivariograma: %d\n", n * (n - 1) / 2))
 
-# Matriz de Correlacion
-vars_eda <- c("precip", "altitud", "temp", "rad", "x_km", "y_km")
-mat_cor <- cor(datos_obs[, vars_eda])
-cat("\n--- Matriz de Correlaciones de Pearson ---\n")
-print(round(mat_cor, 3))
 
-# FIGURA 1: Distribucion Univariada
-guardar_figura("figura1_distribucion_precipitacion.png", {
+# ---- 2.3 Estadistica descriptiva --------------------------------------------
+
+media_p  <- mean(datos$precip)
+mediana_p<- median(datos$precip)
+sd_p     <- sd(datos$precip)
+cv_p     <- 100 * sd_p / media_p
+sw       <- shapiro.test(datos$precip)
+
+cat("\n--- Precipitacion en las estaciones (mm/semana) ---\n")
+print(summary(datos$precip))
+cat(sprintf("Desviacion estandar : %.2f mm\n", sd_p))
+cat(sprintf("Coef. de variacion  : %.1f %%\n", cv_p))
+cat(sprintf("Media / mediana     : %.2f  (>1 = cola a la derecha)\n", media_p / mediana_p))
+cat(sprintf("Shapiro-Wilk        : W = %.4f, p = %.3e  -> %s\n",
+            sw$statistic, sw$p.value,
+            ifelse(sw$p.value < 0.05, "SE RECHAZA normalidad", "no se rechaza")))
+
+cat("\n--- Correlacion de Pearson con la precipitacion ---\n")
+print(round(cor(datos[, c("precip", "altitud", "x_km", "y_km")])[1, ], 3))
+
+
+################################################################################
+# PASO 3. ANALISIS EXPLORATORIO ESPACIAL (EDA)
+################################################################################
+
+cat("\n================ PASO 3: EDA ESPACIAL ================\n")
+
+# ---- 3.1 Distribucion univariada --------------------------------------------
+figura("fig03_distribucion.png", {
   par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3, 1))
-  hist(datos_obs$precip, breaks = 12, col = "#3182bd", border = "white",
-       main = "(A) Histograma de Precipitacion Semanal",
+  hist(datos$precip, breaks = 12, col = "#9ecae1", border = "white",
+       main = "(A) Distribucion de la precipitacion",
        xlab = "Precipitacion (mm/semana)", ylab = "Frecuencia", las = 1)
-  abline(v = mean(datos_obs$precip), col = "red", lwd = 2, lty = 2)
-  legend("topright", legend = c(sprintf("Media: %.1f mm", mean(datos_obs$precip)),
-                                sprintf("Mediana: %.1f mm", median(datos_obs$precip))),
-         col = c("red", "black"), lty = c(2, 0), bty = "n", cex = 0.85)
-
-  boxplot(datos_obs$precip, col = "#9ecae1", horizontal = FALSE,
-          main = "(B) Diagrama de Caja (Boxplot)",
-          ylab = "Precipitacion (mm/semana)", las = 1)
+  abline(v = media_p,   col = "red",   lwd = 2, lty = 2)
+  abline(v = mediana_p, col = "black", lwd = 2, lty = 3)
+  legend("topright", bty = "n", cex = 0.75,
+         legend = c(sprintf("Media = %.1f", media_p),
+                    sprintf("Mediana = %.1f", mediana_p)),
+         col = c("red", "black"), lty = c(2, 3), lwd = 2)
+  boxplot(datos$precip, col = "#9ecae1", las = 1,
+          main = "(B) Diagrama de caja",
+          ylab = "Precipitacion (mm/semana)")
+  par(mfrow = c(1, 1))
 }, ancho = 2400, alto = 1200)
 
-# FIGURA 2: Dispersion frente a Covariables Ambientales
-guardar_figura("figura2_dispersion_covariables.png", {
-  par(mfrow = c(2, 2), mar = c(4.5, 4.5, 2.5, 1))
-  plot(datos_obs$x_km, datos_obs$precip, pch = 21, bg = "#3182bd", cex = 1.3,
-       xlab = "Coordenada Este X (km)", ylab = "Precipitacion (mm/semana)",
-       main = "Precipitacion vs Longitud (Gradiente E-O)", las = 1)
-  abline(lm(precip ~ x_km, data = datos_obs), col = "red", lwd = 2)
 
-  plot(datos_obs$altitud, datos_obs$precip, pch = 21, bg = "#31a354", cex = 1.3,
-       xlab = "Altitud SRTM (m.s.n.m.)", ylab = "Precipitacion (mm/semana)",
-       main = "Precipitacion vs Altitud", las = 1)
-  abline(lm(precip ~ altitud, data = datos_obs), col = "red", lwd = 2)
-
-  plot(datos_obs$temp, datos_obs$precip, pch = 21, bg = "#e6550d", cex = 1.3,
-       xlab = "Temperatura a 2m (C)", ylab = "Precipitacion (mm/semana)",
-       main = "Precipitacion vs Temperatura", las = 1)
-  abline(lm(precip ~ temp, data = datos_obs), col = "red", lwd = 2)
-
-  plot(datos_obs$rad, datos_obs$precip, pch = 21, bg = "#756bb1", cex = 1.3,
-       xlab = "Radiacion Solar (MJ/m2/dia)", ylab = "Precipitacion (mm/semana)",
-       main = "Precipitacion vs Radiacion Solar", las = 1)
-  abline(lm(precip ~ rad, data = datos_obs), col = "red", lwd = 2)
-}, ancho = 2800, alto = 1800)
-
-# FIGURA 3: Mapa de Posting
-tam_burbuja <- 0.8 + (datos_obs$precip - min(datos_obs$precip)) / diff(range(datos_obs$precip)) * 2.2
-pal_colores <- colorRampPalette(c("#fee08b", "#fdae61", "#f46d43", "#d53e4f", "#9e0142", "#5e4fa2"))(100)
-col_idx <- round((datos_obs$precip - min(datos_obs$precip)) / diff(range(datos_obs$precip)) * 99) + 1
-
-guardar_figura("figura3_mapa_posting.png", {
+# ---- 3.2 Mapa de posting ----------------------------------------------------
+# Tamano del simbolo proporcional al valor: muestra DONDE esta cada magnitud.
+figura("fig04_posting.png", {
   par(mar = c(4.5, 4.5, 3, 1))
-  plot(datos_obs$lon, datos_obs$lat, pch = 21, bg = pal_colores[col_idx], cex = tam_burbuja,
-       xlab = "Longitud (Grados)", ylab = "Latitud (Grados)",
-       main = "Mapa de Posting: Precipitacion Semanal Observada (Valle del Cauca)",
-       las = 1, asp = 1)
-  plot(borde_valle, add = TRUE, border = "black", lwd = 1.5)
-  grid(col = "grey80")
-  legend("topright", legend = c("Baja (< 45 mm)", "Media (45 - 80 mm)", "Alta (> 80 mm)"),
-         pch = 21, pt.bg = c(pal_colores[10], pal_colores[50], pal_colores[90]),
-         pt.cex = c(1.0, 1.8, 2.5), bg = "white", bty = "o", cex = 0.8)
-}, ancho = 2000, alto = 2000)
+  tam <- 0.6 + (datos$precip - min(datos$precip)) / diff(range(datos$precip)) * 2.4
+  mapa_base(borde, "Mapa de posting: estaciones simuladas (semana 44)")
+  points(datos$lon, datos$lat, pch = 21, bg = "#3182bd", cex = tam)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.8, pt.cex = c(0.8, 1.8, 3.0),
+         pch = 21, pt.bg = "#3182bd",
+         legend = c("~35 mm", "~110 mm", "~190 mm"))
+}, ancho = 1800, alto = 1900)
 
-# ==============================================================================
-# 4. CALCULO FORMAL DE AUTOCORRELACION ESPACIAL (MORAN Y GEARY)
-# ==============================================================================
-cat("\n[Paso 4] Calculando matrices de vecindad y metricas de autocorrelacion...\n")
 
-n <- nrow(datos_obs)
-coords_obs_km <- as.matrix(datos_obs[, c("x_km", "y_km")])
-
-# Matriz de distancias euclidianas D
-D_obs <- matrix(0, n, n)
-for (i in 1:n) {
-  for (j in 1:n) {
-    D_obs[i, j] <- sqrt((coords_obs_km[i, 1] - coords_obs_km[j, 1])^2 +
-                        (coords_obs_km[i, 2] - coords_obs_km[j, 2])^2)
+# ---- 3.3 Relacion con las covariables ---------------------------------------
+figura("fig05_covariables.png", {
+  par(mfrow = c(1, 3), mar = c(4.5, 4.5, 3, 1))
+  for (v in c("x_km", "y_km", "altitud")) {
+    etiqueta <- switch(v,
+      x_km = "Coordenada Este (km)",
+      y_km = "Coordenada Norte (km)",
+      altitud = "Altitud SRTM (m)")
+    plot(datos[[v]], datos$precip, pch = 21, bg = "#31a354", cex = 1.2, las = 1,
+         xlab = etiqueta, ylab = "Precipitacion (mm/semana)",
+         main = sprintf("r = %.3f", cor(datos[[v]], datos$precip)))
+    abline(lm(datos$precip ~ datos[[v]]), col = "red", lwd = 2)
   }
-}
+  par(mfrow = c(1, 1))
+}, ancho = 2800, alto = 1100)
 
-# Matriz W con umbral de vecindad (percentil 25)
-umbral_dist <- quantile(D_obs[upper.tri(D_obs)], 0.25)
-W <- matrix(0, n, n)
-for (i in 1:n) {
-  for (j in 1:n) {
-    if (i != j && D_obs[i, j] <= umbral_dist) W[i, j] <- 1
-  }
-}
 
-# Estandarizacion por filas con sweep
-sum_filas <- rowSums(W)
-W_std <- sweep(W, 1, ifelse(sum_filas == 0, 1, sum_filas), "/")
+################################################################################
+# PASO 4. MODELO DE TENDENCIA (DERIVA DE GRAN ESCALA)
+#
+# Kriging universal = tendencia deterministica + residuo espacialmente
+# correlacionado. Aqui se estima la primera parte con lm(), igual que
+# Ejemplo4_Geoestadistica.R (seccion "Extraer tendencia").
+################################################################################
 
-# Indice de Moran Global (metodo de clase)
-z_vec <- datos_obs$precip
-z_mean <- mean(z_vec)
-num_moran <- 0
-denom_moran <- sum((z_vec - z_mean)^2)
+cat("\n================ PASO 4: TENDENCIA ================\n")
 
-for (i in 1:n) {
-  for (j in 1:n) {
-    num_moran <- num_moran + W_std[i, j] * (z_vec[i] - z_mean) * (z_vec[j] - z_mean)
-  }
-}
-s0_W <- sum(W_std)
-moran_I <- (n / s0_W) * (num_moran / denom_moran)
+# ---- 4.1 Confusion entre altitud y longitud ---------------------------------
+# La correlacion simple altitud-precipitacion es NEGATIVA (-0.651), pero la
+# altitud esta fuertemente correlacionada con la longitud (0.755): la costa es
+# baja Y occidental, la cordillera es alta Y oriental.
+# Al controlar por posicion, el signo del efecto de la altitud se invierte.
 
-# Indice de Geary C
-num_geary <- 0
-for (i in 1:n) {
-  for (j in 1:n) {
-    num_geary <- num_geary + W_std[i, j] * (z_vec[i] - z_vec[j])^2
-  }
-}
-geary_C <- ((n - 1) / (2 * s0_W)) * (num_geary / denom_moran)
+cat(sprintf("\ncor(altitud, precip) = %.3f   (simple)\n", cor(datos$altitud, datos$precip)))
+cat(sprintf("cor(altitud, x_km)   = %.3f   (colinealidad)\n", cor(datos$altitud, datos$x_km)))
 
-cat(sprintf("  -> Umbral de vecindad espacial: %.2f km\n", umbral_dist))
-cat(sprintf("  -> Indice Global de Moran (I): %.4f (Autocorrelacion Positiva Fuerte)\n", moran_I))
-cat(sprintf("  -> Indice de Geary (C): %.4f (Consistente con C < 1)\n", geary_C))
+mod_A <- lm(precip ~ x_km + y_km, data = datos)
+mod_B <- lm(precip ~ x_km + y_km + altitud, data = datos)
 
-# ==============================================================================
-# 5. MODELACION DE TENDENCIA Y ANALISIS DE RESIDUALES
-# ==============================================================================
-cat("\n[Paso 5] Ajustando modelo de tendencia lineal con covariables ambientales...\n")
+cat("\n--- Modelo A: solo coordenadas ---\n")
+print(round(summary(mod_A)$coefficients, 4))
+cat(sprintf("R2 = %.4f   R2 ajustado = %.4f\n",
+            summary(mod_A)$r.squared, summary(mod_A)$adj.r.squared))
 
-modelo_tendencia <- lm(precip ~ altitud + temp + rad + x_km + y_km, data = datos_obs)
-resumen_modelo <- summary(modelo_tendencia)
-print(resumen_modelo)
+cat("\n--- Modelo B: coordenadas + altitud ---\n")
+print(round(summary(mod_B)$coefficients, 4))
+cat(sprintf("R2 = %.4f   R2 ajustado = %.4f\n",
+            summary(mod_B)$r.squared, summary(mod_B)$adj.r.squared))
 
-residuales <- residuals(modelo_tendencia)
-datos_obs$residuales <- residuales
-datos_obs$tendencia_fit <- fitted(modelo_tendencia)
+cat("\n--- Comparacion de modelos anidados (test F) ---\n")
+print(anova(mod_A, mod_B))
 
-# Verificacion de Moran sobre residuales
-res_mean <- mean(residuales)
-num_moran_res <- 0
-denom_moran_res <- sum((residuales - res_mean)^2)
+# Se conserva el modelo B: la altitud aporta informacion significativa (p<0.05)
+# y su signo positivo es fisicamente coherente (ascenso orografico: a igual
+# longitud, mas altura implica mas condensacion).
+modelo_tendencia <- mod_B
+datos$tendencia  <- fitted(modelo_tendencia)
+datos$residual   <- residuals(modelo_tendencia)
 
-for (i in 1:n) {
-  for (j in 1:n) {
-    num_moran_res <- num_moran_res + W_std[i, j] * (residuales[i] - res_mean) * (residuales[j] - res_mean)
-  }
-}
-moran_I_res <- (n / s0_W) * (num_moran_res / denom_moran_res)
+# ---- 4.2 Diagnostico de los residuales --------------------------------------
+sw_res <- shapiro.test(datos$residual)
+cat(sprintf("\nResiduales: media = %.2e, sd = %.2f mm\n",
+            mean(datos$residual), sd(datos$residual)))
+cat(sprintf("Shapiro-Wilk sobre residuales: W = %.4f, p = %.4f -> %s\n",
+            sw_res$statistic, sw_res$p.value,
+            ifelse(sw_res$p.value < 0.05, "SE RECHAZA normalidad",
+                   "NO se rechaza normalidad")))
 
-cat(sprintf("  -> R-cuadrado de tendencia: %.4f\n", resumen_modelo$r.squared))
-cat(sprintf("  -> Moran I residual: %.4f (Dependencia espacial remanente justificada)\n", moran_I_res))
-
-# ==============================================================================
-# 6. SEMIVARIOGRAMA EXPERIMENTAL Y AJUSTE DE MODELO TEORICO
-# ==============================================================================
-cat("\n[Paso 6] Calculando semivariograma experimental y ajustando modelo teorico...\n")
-
-pares_idx <- which(upper.tri(D_obs), arr.ind = TRUE)
-h_pares   <- D_obs[upper.tri(D_obs)]
-gamma_pares <- (residuales[pares_idx[, 1]] - residuales[pares_idx[, 2]])^2 / 2
-
-cutoff_dist <- max(D_obs) * 0.75
-en_rango <- h_pares <= cutoff_dist
-
-n_bins <- 12
-bins_factor <- cut(h_pares[en_rango], breaks = n_bins)
-gamma_emp   <- tapply(gamma_pares[en_rango], bins_factor, mean)
-h_medio     <- tapply(h_pares[en_rango], bins_factor, mean)
-n_pares_bin <- tapply(gamma_pares[en_rango], bins_factor, length)
-
-semivario_df <- na.omit(data.frame(h = h_medio, gamma = gamma_emp, N = n_pares_bin))
-print(semivario_df)
-
-# Funcion SCE para ajuste de modelo exponencial
-sce_exponencial <- function(theta, h, gamma_obs) {
-  c0 <- theta[1]
-  c1 <- theta[2]
-  phi <- theta[3]
-  gamma_teo <- c0 + c1 * (1 - exp(-h / phi))
-  sum((gamma_obs - gamma_teo)^2)
-}
-
-phi_grid <- quantile(semivario_df$h, probs = c(0.15, 0.30, 0.50, 0.70))
-ajustes_lista <- lapply(phi_grid, function(phi0) {
-  optim(par = c(c0 = 0.05 * var(residuales), c1 = 0.95 * var(residuales), phi = phi0),
-        fn = sce_exponencial, h = semivario_df$h, gamma_obs = semivario_df$gamma,
-        method = "L-BFGS-B",
-        lower = c(0, 0.01, 1),
-        upper = c(2 * max(semivario_df$gamma), 5 * max(semivario_df$gamma), 3 * cutoff_dist))
-})
-
-sce_valores <- sapply(ajustes_lista, function(a) a$value)
-ajuste_optimo <- ajustes_lista[[which.min(sce_valores)]]
-
-c0_hat   <- unname(ajuste_optimo$par["c0"])
-c1_hat   <- unname(ajuste_optimo$par["c1"])
-phi_hat  <- unname(ajuste_optimo$par["phi"])
-sill_hat <- c0_hat + c1_hat
-rango_practico <- 3 * phi_hat
-
-cat("--- Parametros del Semivariograma Exponencial Ajustado ---\n")
-cat(sprintf("Efecto Pepita (Nugget, c0): %.4f\n", c0_hat))
-cat(sprintf("Meseta Parcial (Sill parcial, c1): %.4f\n", c1_hat))
-cat(sprintf("Meseta Total (Sill total): %.4f\n", sill_hat))
-cat(sprintf("Parametro de Rango (phi): %.2f km\n", phi_hat))
-cat(sprintf("Rango Practico (3 * phi): %.2f km\n", rango_practico))
-
-# FIGURA 4: Semivariograma Experimental y Modelo Ajustado
-guardar_figura("figura4_semivariograma_ajustado.png", {
-  par(mar = c(4.5, 4.5, 3, 1))
-  curva_h <- seq(0, cutoff_dist, length.out = 200)
-  curva_gamma <- c0_hat + c1_hat * (1 - exp(-curva_h / phi_hat))
-
-  plot(h_pares[en_rango], gamma_pares[en_rango], pch = 20, col = "grey75", cex = 0.7,
-       xlab = "Distancia h (km)", ylab = "Semivarianza gamma(h)",
-       main = "Semivariograma Experimental y Modelo Teorico Exponencial",
-       las = 1, xlim = c(0, cutoff_dist), ylim = c(0, max(semivario_df$gamma) * 1.35))
-  points(semivario_df$h, semivario_df$gamma, pch = 19, col = "#08519c", cex = 1.6)
-  lines(curva_h, curva_gamma, col = "red", lwd = 2.5)
-  abline(h = sill_hat, col = "darkgreen", lty = 2, lwd = 1.5)
-  abline(v = rango_practico, col = "purple", lty = 2, lwd = 1.5)
-  legend("bottomright", 
-         legend = c("Nube de pares gamma_ij", "Semivariograma empirico (bins)",
-                    "Modelo Exponencial ajustado", sprintf("Sill total = %.1f", sill_hat),
-                    sprintf("Rango practico = %.1f km", rango_practico)),
-         col = c("grey75", "#08519c", "red", "darkgreen", "purple"),
-         pch = c(20, 19, NA, NA, NA), lty = c(0, 0, 1, 2, 2), lwd = c(0, 0, 2.5, 1.5, 1.5),
-         bg = "white", bty = "o", cex = 0.8)
-}, ancho = 2400, alto = 1500)
-
-# ==============================================================================
-# 7. FORMULACION DE KRIGING UNIVERSAL CON LAGRANGE
-# ==============================================================================
-cat("\n[Paso 7] Construyendo matriz de covarianza y estimador Kriging Universal...\n")
-
-C_cov <- function(h) sill_hat * exp(-h / phi_hat)
-Sigma_obs <- matrix(C_cov(as.vector(D_obs)), nrow = n)
-
-kriging_universal_pred <- function(s0_km, coords_sample, resid_sample, covar_df_new, mod_tend, Sigma_mat, C_fn) {
-  n_pts <- nrow(coords_sample)
-  d0 <- sqrt((coords_sample[, 1] - s0_km[1])^2 + (coords_sample[, 2] - s0_km[2])^2)
-  c0_vec <- C_fn(d0)
-  
-  # Sistema lineal aumentado de Kriging (Lagrange)
-  A <- rbind(cbind(Sigma_mat, rep(1, n_pts)), c(rep(1, n_pts), 0))
-  b <- c(c0_vec, 1)
-  sol <- solve(A, b)
-  
-  pesos_lambda <- sol[1:n_pts]
-  mu_lagrange  <- sol[n_pts + 1]
-  
-  pred_tendencia <- predict(mod_tend, newdata = covar_df_new)
-  pred_residuo   <- sum(pesos_lambda * resid_sample)
-  pred_total     <- unname(pred_tendencia + pred_residuo)
-  var_kriging    <- unname(max(0, sill_hat - sum(pesos_lambda * c0_vec) - mu_lagrange))
-  
-  return(c(prediccion = pred_total, 
-           tendencia = unname(pred_tendencia), 
-           residuo_krg = unname(pred_residuo), 
-           varianza = var_kriging))
-}
-
-# ==============================================================================
-# 8. VALIDACION CRUZADA LEAVE-ONE-OUT (LOOCV)
-# ==============================================================================
-cat("\n[Paso 8] Ejecutando validacion cruzada Leave-One-Out (LOOCV)...\n")
-
-pred_loo <- numeric(n)
-var_loo  <- numeric(n)
-errores_loo <- numeric(n)
-
-for (i in 1:n) {
-  datos_sin_i  <- datos_obs[-i, ]
-  coords_sin_i <- coords_obs_km[-i, ]
-  Sigma_sin_i  <- Sigma_obs[-i, -i]
-  
-  mod_tend_i  <- lm(precip ~ altitud + temp + rad + x_km + y_km, data = datos_sin_i)
-  resid_sin_i <- residuals(mod_tend_i)
-  
-  s0_i <- coords_obs_km[i, ]
-  df_new_i <- datos_obs[i, , drop = FALSE]
-  
-  res_krg_i <- kriging_universal_pred(s0_i, coords_sin_i, resid_sin_i, df_new_i, mod_tend_i, Sigma_sin_i, C_cov)
-  
-  pred_loo[i] <- res_krg_i["prediccion"]
-  var_loo[i]  <- res_krg_i["varianza"]
-  errores_loo[i] <- datos_obs$precip[i] - pred_loo[i]
-}
-
-rmse_loocv <- sqrt(mean(errores_loo^2))
-mae_loocv  <- mean(abs(errores_loo))
-r2_loocv   <- 1 - (sum(errores_loo^2) / sum((datos_obs$precip - mean(datos_obs$precip))^2))
-
-cat("--- Metricas de Validacion Cruzada (LOOCV) ---\n")
-cat(sprintf("RMSE: %.2f mm/semana\n", rmse_loocv))
-cat(sprintf("MAE:  %.2f mm/semana\n", mae_loocv))
-cat(sprintf("R2 de Validacion (R2_CV): %.4f\n", r2_loocv))
-
-# FIGURA 5: Diagnostico de Validacion Cruzada
-guardar_figura("figura5_validacion_cruzada.png", {
-  par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3, 1))
-
-  plot(datos_obs$precip, pred_loo, pch = 21, bg = "#3182bd", cex = 1.4,
-       xlab = "Precipitacion Observada (mm/semana)", ylab = "Precipitacion Predicha LOOCV (mm/semana)",
-       main = sprintf("(A) Observado vs Predicho (R2 = %.2f)", r2_loocv), las = 1,
-       xlim = range(c(datos_obs$precip, pred_loo)), ylim = range(c(datos_obs$precip, pred_loo)))
-  abline(a = 0, b = 1, col = "red", lwd = 2, lty = 2)
-  grid(col = "grey80")
-
-  plot(datos_obs$precip, errores_loo, pch = 21, bg = "#e6550d", cex = 1.4,
-       xlab = "Precipitacion Observada (mm/semana)", ylab = "Error Residual (Obs - Pred)",
-       main = sprintf("(B) Diagnostico de Residuos (RMSE = %.2f mm)", rmse_loocv), las = 1)
+figura("fig06_residuales.png", {
+  par(mfrow = c(1, 3), mar = c(4.5, 4.5, 3, 1))
+  hist(datos$residual, breaks = 12, col = "#fdae6b", border = "white", las = 1,
+       main = "(A) Residuales del modelo", xlab = "Residual (mm)")
+  qqnorm(datos$residual, pch = 21, bg = "#fdae6b", las = 1,
+         main = "(B) Normal Q-Q")
+  qqline(datos$residual, col = "red", lwd = 2)
+  plot(datos$tendencia, datos$residual, pch = 21, bg = "#fdae6b", cex = 1.2, las = 1,
+       xlab = "Valor ajustado (mm)", ylab = "Residual (mm)",
+       main = "(C) Residual vs ajustado")
   abline(h = 0, col = "red", lwd = 2, lty = 2)
-  grid(col = "grey80")
-}, ancho = 2400, alto = 1200)
+  par(mfrow = c(1, 1))
+}, ancho = 2800, alto = 1100)
 
-# ==============================================================================
-# 9. PREDICCION ESPACIAL SOBRE TODA LA GRILLA DEPARTAMENTAL
-# ==============================================================================
-cat("\n[Paso 9] Evaluando Kriging Universal sobre la totalidad del Valle del Cauca...\n")
 
-N_total <- nrow(df_grilla_valle)
-mat_pred_grilla <- matrix(NA, nrow = N_total, ncol = 4)
-colnames(mat_pred_grilla) <- c("prediccion", "tendencia", "residuo_krg", "varianza")
+# ---- 4.3 Representacion visual de la confusion ------------------------------
+# Cuatro paneles que muestran por que la correlacion simple de la altitud
+# enganya, y cual es su efecto real.
 
-for (k in 1:N_total) {
-  s0_k <- as.numeric(df_grilla_valle[k, c("x_km", "y_km")])
-  df_new_k <- df_grilla_valle[k, , drop = FALSE]
-  mat_pred_grilla[k, ] <- kriging_universal_pred(s0_k, coords_obs_km, residuales, df_new_k, modelo_tendencia, Sigma_obs, C_cov)
+# Bandas de longitud (terciles) para el analisis estratificado
+cortes_x <- quantile(datos$x_km, c(0, 1/3, 2/3, 1))
+datos$banda <- cut(datos$x_km, breaks = cortes_x, include.lowest = TRUE,
+                   labels = c("Oeste (pacifico)", "Centro", "Este (valle)"))
+
+col_banda <- c("#1a9850", "#fdae61", "#d73027")
+pal_lon <- colorRampPalette(c("#1a9850", "#fdae61", "#d73027"))(100)
+idx_lon <- round((datos$x_km - min(datos$x_km)) / diff(range(datos$x_km)) * 99) + 1
+
+cat("\n--- Pendiente precip~altitud DENTRO de cada banda de longitud ---\n")
+for (b in levels(datos$banda)) {
+  sub <- datos[datos$banda == b, ]
+  pend <- coef(lm(precip ~ altitud, data = sub))[2]
+  cat(sprintf("  %-18s n=%2d   pendiente = %+.4f mm/m\n", b, nrow(sub), pend))
+}
+cat(sprintf("  %-18s n=%2d   pendiente = %+.4f mm/m  <- agrupado\n",
+            "TODOS JUNTOS", nrow(datos), coef(lm(precip ~ altitud, data = datos))[2]))
+
+# --- 4.3a La colinealidad: altitud contra longitud ---
+figura("fig07a_colinealidad.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(datos$x_km, datos$altitud, pch = 21, bg = pal_lon[idx_lon], cex = 1.5, las = 1,
+       xlab = "Coordenada Este (km)", ylab = "Altitud SRTM (m)",
+       main = sprintf("Altitud y longitud van juntas (r = %.3f)",
+                      cor(datos$x_km, datos$altitud)))
+  abline(lm(altitud ~ x_km, data = datos), col = "black", lwd = 2)
+  legend("topleft", bty = "n", cex = 0.8, pch = 21, pt.bg = col_banda,
+         legend = levels(datos$banda))
+}, ancho = 1800, alto = 1500)
+
+# --- 4.3b La correlacion simple, enganyosa ---
+figura("fig07b_correlacion_simple.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(datos$altitud, datos$precip, pch = 21, bg = pal_lon[idx_lon], cex = 1.5, las = 1,
+       xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
+       main = sprintf("Correlacion simple r = %.3f: 'mas alto = mas seco' (FALSO)",
+                      cor(datos$altitud, datos$precip)))
+  abline(lm(precip ~ altitud, data = datos), col = "red", lwd = 2.5)
+  legend("topright", bty = "n", cex = 0.8, pch = 21, pt.bg = col_banda,
+         legend = levels(datos$banda), title = "Banda de longitud")
+}, ancho = 1800, alto = 1500)
+
+# --- 4.3c Estratificado por banda de longitud ---
+figura("fig07c_estratificado.png", {
+  par(mar = c(4.5, 4.5, 4.5, 1))
+  plot(datos$altitud, datos$precip, type = "n", las = 1,
+       xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
+       main = "Estratificado por longitud: el efecto de la altitud\nNO es homogeneo", cex.main = 1)
+  for (k in seq_along(levels(datos$banda))) {
+    sub <- datos[datos$banda == levels(datos$banda)[k], ]
+    points(sub$altitud, sub$precip, pch = 21, bg = col_banda[k], cex = 1.5)
+    aj <- lm(precip ~ altitud, data = sub); xs <- range(sub$altitud)
+    lines(xs, predict(aj, data.frame(altitud = xs)), col = col_banda[k], lwd = 3)
+  }
+  legend("topright", bty = "n", cex = 0.85, lwd = 3, col = col_banda,
+         legend = sprintf("%s: %+.4f mm/m", levels(datos$banda),
+                          sapply(levels(datos$banda), function(b)
+                            coef(lm(precip ~ altitud, data = datos[datos$banda == b, ]))[2])))
+}, ancho = 1800, alto = 1500)
+
+# --- 4.3d Grafico de variable anyadida: el efecto parcial real ---
+figura("fig07d_variable_anyadida.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  res_precip  <- residuals(lm(precip  ~ x_km + y_km, data = datos))
+  res_altitud <- residuals(lm(altitud ~ x_km + y_km, data = datos))
+  plot(res_altitud, res_precip, pch = 21, bg = "#4575b4", cex = 1.5, las = 1,
+       xlab = "Altitud | quitada la posicion (m)",
+       ylab = "Precipitacion | quitada la posicion (mm)",
+       main = sprintf("Efecto parcial de la altitud = %+.4f mm/m",
+                      coef(lm(res_precip ~ res_altitud))[2]))
+  abline(lm(res_precip ~ res_altitud), col = "blue", lwd = 2.5)
+  abline(h = 0, v = 0, col = "grey70", lty = 3)
+}, ancho = 1800, alto = 1500)
+
+
+# ---- 4.4 Las mismas relaciones, sobre el mapa -------------------------------
+# Los graficos anteriores son en el espacio de las variables. Estos son en el
+# espacio geografico: muestran DONDE ocurre cada cosa.
+
+# --- 4.4a Las tres bandas de longitud sobre el territorio ---
+figura("fig08a_mapa_bandas.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  mapa_base(borde, "Bandas de longitud del analisis estratificado")
+  for (k in seq_along(levels(datos$banda))) {
+    sub <- datos[datos$banda == levels(datos$banda)[k], ]
+    points(sub$lon, sub$lat, pch = 21, bg = col_banda[k], cex = 1.6)
+  }
+  abline(v = lon0 + cortes_x[2:3] / (111.320 * cos(lat0 * pi / 180)),
+         col = "grey30", lty = 2, lwd = 2)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.8, pch = 21, pt.cex = 1.4,
+         pt.bg = col_banda, legend = levels(datos$banda))
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4b Altitud del terreno con las estaciones encima ---
+figura("fig08b_mapa_altitud.png", {
+  par(mar = c(4, 4, 3.5, 4))
+  plot(mask(r_alt, mascara, maskvalues = c(FALSE, NA)),
+       col = terrain.colors(50), las = 1,
+       main = "Altitud SRTM (m) y estaciones simuladas",
+       xlab = "Longitud", ylab = "Latitud")
+  plot(borde, add = TRUE, border = "black", lwd = 1.2)
+  points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.9, lwd = 1.4)
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4c Residuales sobre el mapa: azul negativo, rojo positivo ---
+# Si los colores aparecen agrupados en manchas, hay autocorrelacion espacial
+# remanente y el kriging tiene trabajo que hacer.
+figura("fig08c_mapa_residuales.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  tam_res <- 0.7 + abs(datos$residual) / max(abs(datos$residual)) * 2.3
+  col_res <- ifelse(datos$residual >= 0, "#d73027", "#4575b4")
+  mapa_base(borde, "Residuales de la tendencia (rojo +, azul -)")
+  points(datos$lon, datos$lat, pch = 21, bg = col_res, cex = tam_res)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.78, pch = 21,
+         pt.bg = c("#d73027", "#4575b4"), pt.cex = 1.6,
+         legend = c("Subestima el modelo (+)", "Sobreestima el modelo (-)"))
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4d Observado contra ajustado, lado a lado en el mapa ---
+figura("fig08d_mapa_obs_vs_tendencia.png", {
+  par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3.5, 1))
+  rango <- range(c(datos$precip, datos$tendencia))
+  escala <- function(v) 0.6 + (v - rango[1]) / diff(rango) * 2.4
+  mapa_base(borde, "(A) Precipitacion observada")
+  points(datos$lon, datos$lat, pch = 21, bg = "#3182bd", cex = escala(datos$precip))
+  mapa_base(borde, "(B) Tendencia ajustada por el modelo")
+  points(datos$lon, datos$lat, pch = 21, bg = "#31a354", cex = escala(datos$tendencia))
+  par(mfrow = c(1, 1))
+}, ancho = 3000, alto = 1700)
+
+
+################################################################################
+# PASO 5. AUTOCORRELACION ESPACIAL (MORAN Y GEARY)
+#
+# Es el corazon del enunciado: "evaluar el papel de la correlacion espacial".
+# Indices calculados a mano segun carpeta/Script_Spatial_Analytics.R.
+################################################################################
+
+cat("\n================ PASO 5: AUTOCORRELACION ESPACIAL ================\n")
+
+coords <- as.matrix(datos[, c("x_km", "y_km")])
+D <- as.matrix(dist(coords))       # matriz de distancias, idioma de Ejemplo4
+
+# ---- 5.1 Matriz de pesos e indices ------------------------------------------
+# OJO: el script de clase estandariza las filas con
+#   W <- matrix(ifelse(row_sums == 0, 0, W / row_sums), nrow = n, ncol = n)
+# ifelse() devuelve un objeto del largo del TEST (n), no del resultado (n^2):
+# se queda con la primera columna y matrix() la recicla, asi que la
+# estandarizacion NO ocurre y las filas no suman 1. Aqui se usa sweep().
+
+pesos_espaciales <- function(D, q) {
+  n <- nrow(D)
+  umbral <- quantile(D[upper.tri(D)], q)
+  W <- matrix(0, n, n)
+  W[D <= umbral] <- 1
+  diag(W) <- 0
+  filas <- rowSums(W)
+  list(W = sweep(W, 1, ifelse(filas == 0, 1, filas), "/"),
+       umbral = unname(umbral), vecinos = mean(filas))
 }
 
-df_grilla_valle$prediccion  <- mat_pred_grilla[, "prediccion"]
-df_grilla_valle$tendencia   <- mat_pred_grilla[, "tendencia"]
-df_grilla_valle$residuo_krg <- mat_pred_grilla[, "residuo_krg"]
-df_grilla_valle$varianza    <- mat_pred_grilla[, "varianza"]
-df_grilla_valle$desv_est    <- sqrt(df_grilla_valle$varianza)
+moran <- function(z, W) {
+  n <- length(z); zc <- z - mean(z)
+  (n / sum(W)) * (sum(W * outer(zc, zc)) / sum(zc^2))
+}
 
-# Reconstruccion de objetos SpatRaster
-r_pred_valle <- rast(df_grilla_valle[, c("lon", "lat", "prediccion")], type = "xyz", crs = crs(r_altitud))
-r_var_valle  <- rast(df_grilla_valle[, c("lon", "lat", "varianza")],   type = "xyz", crs = crs(r_altitud))
-r_sd_valle   <- rast(df_grilla_valle[, c("lon", "lat", "desv_est")],   type = "xyz", crs = crs(r_altitud))
-r_tend_valle <- rast(df_grilla_valle[, c("lon", "lat", "tendencia")],  type = "xyz", crs = crs(r_altitud))
-r_res_valle  <- rast(df_grilla_valle[, c("lon", "lat", "residuo_krg")], type = "xyz", crs = crs(r_altitud))
+geary <- function(z, W) {
+  n <- length(z); zc <- z - mean(z)
+  ((n - 1) / (2 * sum(W))) * (sum(W * outer(z, z, function(a, b) (a - b)^2)) / sum(zc^2))
+}
 
-writeRaster(r_pred_valle, file.path(DIR_SALIDA, "raster_precipitacion_estimada.tif"), overwrite = TRUE)
-writeRaster(r_var_valle,  file.path(DIR_SALIDA, "raster_varianza_kriging.tif"), overwrite = TRUE)
+# Significancia por permutacion: se re-etiquetan los valores al azar sobre las
+# mismas posiciones. Si la estructura fuera casual, el I observado caeria dentro
+# de la nube de I permutados.
+p_permutacion <- function(z, W, n_perm = 999) {
+  obs <- moran(z, W)
+  set.seed(2026)
+  nulos <- replicate(n_perm, moran(sample(z), W))
+  (1 + sum(nulos >= obs)) / (n_perm + 1)
+}
 
-# FIGURA 6: Mapas de Prediccion e Incertidumbre
-guardar_figura("figura6_mapas_prediccion_incertidumbre.png", {
-  par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3, 4.5))
+# ---- 5.2 Sensibilidad al umbral de vecindad ---------------------------------
+# El script de clase usa el percentil 5 de las distancias. La eleccion cambia el
+# resultado, asi que se reporta un rango en vez de un solo numero.
 
-  plot(r_pred_valle, col = rev(terrain.colors(50)),
-       main = "(A) Precipitacion Semanal Estimada (mm/semana)",
-       xlab = "Longitud", ylab = "Latitud", las = 1)
-  plot(borde_valle, add = TRUE, border = "black", lwd = 1.2)
-  points(datos_obs$lon, datos_obs$lat, pch = 3, col = "black", cex = 0.8, lwd = 1.2)
+tabla_ac <- do.call(rbind, lapply(c(0.05, 0.10, 0.25), function(q) {
+  pw <- pesos_espaciales(D, q)
+  data.frame(
+    percentil    = q * 100,
+    umbral_km    = pw$umbral,
+    vecinos_prom = pw$vecinos,
+    I_precip     = moran(datos$precip,   pw$W),
+    C_precip     = geary(datos$precip,   pw$W),
+    I_residual   = moran(datos$residual, pw$W),
+    C_residual   = geary(datos$residual, pw$W),
+    p_residual   = p_permutacion(datos$residual, pw$W))
+}))
 
-  plot(r_sd_valle, col = heat.colors(50),
-       main = "(B) Incertidumbre (Desv. Est. Kriging)",
-       xlab = "Longitud", ylab = "Latitud", las = 1)
-  plot(borde_valle, add = TRUE, border = "black", lwd = 1.2)
-  points(datos_obs$lon, datos_obs$lat, pch = 3, col = "black", cex = 0.8, lwd = 1.2)
-}, ancho = 3200, alto = 1600)
+cat("\n--- Indices por umbral de vecindad ---\n")
+print(format(tabla_ac, digits = 4))
+cat(sprintf("\nValor esperado bajo aleatoriedad: E[I] = %.4f   |   E[C] = 1\n", -1 / (n - 1)))
 
-# FIGURA 7: Descomposicion de Kriging
-guardar_figura("figura7_descomposicion_kriging.png", {
-  par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3, 4.5))
+write.csv(tabla_ac, file.path(DIR_SALIDA, "tabla_autocorrelacion.csv"), row.names = FALSE)
 
-  plot(r_tend_valle, col = rev(terrain.colors(50)),
-       main = "(A) Componente de Tendencia (Covariables)",
-       xlab = "Longitud", ylab = "Latitud", las = 1)
-  plot(borde_valle, add = TRUE, border = "black", lwd = 1.2)
+# ---- 5.3 Diagrama de dispersion de Moran ------------------------------------
+# Eje x: valor estandarizado. Eje y: promedio de sus vecinos (rezago espacial).
+# La pendiente de la recta ES el indice de Moran.
 
-  plot(r_res_valle, col = topo.colors(50),
-       main = "(B) Componente Residual Espacial (Kriging)",
-       xlab = "Longitud", ylab = "Latitud", las = 1)
-  plot(borde_valle, add = TRUE, border = "black", lwd = 1.2)
-}, ancho = 3200, alto = 1600)
+pw_ref <- pesos_espaciales(D, 0.10)
+z_std  <- as.numeric(scale(datos$residual))
+lag_z  <- as.numeric(pw_ref$W %*% z_std)
+I_ref  <- moran(datos$residual, pw_ref$W)
 
-# ==============================================================================
-# 10. EXPORTACION DE TABLAS NUMERICAS
-# ==============================================================================
-cat("\n[Paso 10] Exportando tablas de resultados numericos...\n")
+figura("fig09_moran_scatter.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  col_cuad <- ifelse(z_std >= 0 & lag_z >= 0, "#d73027",
+              ifelse(z_std <  0 & lag_z <  0, "#4575b4", "grey65"))
+  plot(z_std, lag_z, pch = 21, bg = col_cuad, cex = 1.4, las = 1,
+       xlab = "Residual estandarizado", ylab = "Promedio de los vecinos (rezago espacial)",
+       main = sprintf("Diagrama de Moran de los residuales (I = %.3f)", I_ref))
+  abline(h = 0, v = 0, col = "grey60", lty = 3)
+  abline(lm(lag_z ~ z_std), col = "black", lwd = 2.5)
+  legend("topleft", bty = "n", cex = 0.75, pch = 21,
+         pt.bg = c("#d73027", "#4575b4", "grey65"),
+         legend = c("Alto rodeado de alto", "Bajo rodeado de bajo", "Discordante"))
+}, ancho = 1800, alto = 1600)
 
-tabla_descriptiva <- data.frame(
-  Variable = c("Precipitacion (mm)", "Altitud SRTM (m)", "Temperatura (C)", "Radiacion (MJ/m2)", "Residuales"),
-  Media = c(mean(datos_obs$precip), mean(datos_obs$altitud), mean(datos_obs$temp), mean(datos_obs$rad), mean(residuales)),
-  Desv_Est = c(sd(datos_obs$precip), sd(datos_obs$altitud), sd(datos_obs$temp), sd(datos_obs$rad), sd(residuales)),
-  Minimo = c(min(datos_obs$precip), min(datos_obs$altitud), min(datos_obs$temp), min(datos_obs$rad), min(residuales)),
-  Maximo = c(max(datos_obs$precip), max(datos_obs$altitud), max(datos_obs$temp), max(datos_obs$rad), max(residuales)),
-  Moran_I = c(moran_I, NA, NA, NA, moran_I_res)
+# ---- 5.4 Correlograma: Moran por anillo de distancia ------------------------
+# Muestra hasta donde llega la dependencia espacial. El corte por cero anticipa
+# el rango practico que estimara el semivariograma.
+
+anillos <- seq(0, max(D) * 0.7, length.out = 9)
+correlograma <- do.call(rbind, lapply(seq_len(length(anillos) - 1), function(k) {
+  W <- matrix(0, n, n)
+  W[D > anillos[k] & D <= anillos[k + 1]] <- 1
+  diag(W) <- 0
+  filas <- rowSums(W)
+  if (sum(filas) == 0) return(NULL)
+  W <- sweep(W, 1, ifelse(filas == 0, 1, filas), "/")
+  data.frame(h_medio = mean(anillos[k:(k + 1)]),
+             pares = sum(W > 0),
+             I = moran(datos$residual, W))
+}))
+
+cat("\n--- Correlograma de los residuales ---\n")
+print(format(correlograma, digits = 4))
+
+figura("fig10_correlograma.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(correlograma$h_medio, correlograma$I, type = "o", pch = 19, cex = 1.3,
+       col = "#08519c", lwd = 2, las = 1,
+       xlab = "Distancia h (km)", ylab = "Indice de Moran I",
+       main = "Correlograma de los residuales de la tendencia")
+  abline(h = -1 / (n - 1), col = "red", lty = 2, lwd = 2)
+  text(max(correlograma$h_medio) * 0.75, -1 / (n - 1), pos = 3, cex = 0.75,
+       col = "red", labels = "E[I] bajo aleatoriedad")
+  grid(col = "grey85")
+}, ancho = 1900, alto = 1400)
+
+
+################################################################################
+# PASO 6. SEMIVARIOGRAMA EMPIRICO Y AJUSTE DE MODELOS TEORICOS
+#
+# Respaldo del material:
+#
+# - Lecture_SpatialStatistics.pdf, ec. (11):
+#     gamma(h) = 1/(2 N(h)) * SUM (z_i - z_j)^2
+#   y tres modelos validos, ec. (12) esferico, (13) exponencial, (14) gaussiano,
+#   parametrizados por pepita c0, meseta c0+c1 y rango a.
+#
+# - Geoestadistica (libro del curso):
+#     "En caso de encontrarse tendencia en los datos, esta tendencia se modela
+#      con modelos de regresion polinomicos [...] y el semivariograma se
+#      construye con los residuales obtenidos"
+#     "en general, se usan los rezagos espaciales hasta la mitad de la maxima
+#      distancia"
+#     "Es importante elegir una distancia maxima [...] en caso de que se observe
+#      un comportamiento erratico a distancias mayores"
+#
+# Se llevan DOS tendencias en paralelo (lineal y cuadratica) y se comparan.
+################################################################################
+
+cat("\n================ PASO 6: SEMIVARIOGRAMA ================\n")
+
+# ---- 6.1 Las dos tendencias en competencia ----------------------------------
+formulas_tendencia <- list(
+  lineal     = precip ~ x_km + y_km + altitud,
+  cuadratica = precip ~ x_km + I(x_km^2) + y_km + altitud
 )
-write.csv(tabla_descriptiva, file.path(DIR_SALIDA, "tabla1_estadistica_descriptiva.csv"), row.names = FALSE)
 
-tabla_coeficientes <- as.data.frame(resumen_modelo$coefficients)
-tabla_coeficientes$Variable <- rownames(tabla_coeficientes)
-write.csv(tabla_coeficientes, file.path(DIR_SALIDA, "tabla2_coeficientes_tendencia.csv"), row.names = FALSE)
+modelos_tend <- lapply(formulas_tendencia, function(f) lm(f, data = datos))
+residuales_tend <- lapply(modelos_tend, residuals)
 
-tabla_geoestadistica <- data.frame(
-  Parametro = c("Efecto Pepita (c0)", "Contribucion (c1)", "Meseta Total (Sill)", "Parametro de Rango (phi)", "Rango Practico", "RMSE LOOCV", "MAE LOOCV", "R2 LOOCV"),
-  Valor = c(c0_hat, c1_hat, sill_hat, phi_hat, rango_practico, rmse_loocv, mae_loocv, r2_loocv),
-  Unidad = c("mm^2", "mm^2", "mm^2", "km", "km", "mm", "mm", "Adimensional")
-)
-write.csv(tabla_geoestadistica, file.path(DIR_SALIDA, "tabla3_parametros_geoestadistica.csv"), row.names = FALSE)
+cat("\n--- Comparacion de tendencias ---\n")
+print(do.call(rbind, lapply(names(modelos_tend), function(nm) {
+  m <- modelos_tend[[nm]]; r <- residuals(m)
+  pw <- pesos_espaciales(D, 0.10)
+  data.frame(tendencia = nm,
+             R2_ajustado = round(summary(m)$adj.r.squared, 4),
+             sd_residual = round(sd(r), 2),
+             shapiro_p   = round(shapiro.test(r)$p.value, 4),
+             moran_residual = round(moran(r, pw$W), 3))
+})))
 
-cat("\n====================================================================\n")
-cat(" EJECUCION FINALIZADA EXITOSAMENTE                                  \n")
-cat(" Todos los graficos, mapas y tablas fueron generados en /resultados \n")
-cat("====================================================================\n")
+# ---- 6.2 Semivariograma empirico --------------------------------------------
+# Ecuacion (11) de la Lecture, agrupando los pares en intervalos de distancia.
+
+semivariograma_empirico <- function(resid, D, cutoff, n_bins = 12) {
+  pares <- which(upper.tri(D), arr.ind = TRUE)
+  h     <- D[upper.tri(D)]
+  gamma <- (resid[pares[, 1]] - resid[pares[, 2]])^2 / 2
+  en    <- h <= cutoff
+  bins  <- cut(h[en], breaks = n_bins)
+  na.omit(data.frame(h = tapply(h[en], bins, mean),
+                     gamma = tapply(gamma[en], bins, mean),
+                     N = tapply(gamma[en], bins, length)))
+}
+
+D_MAX <- max(D)
+CUTOFF_LIBRO <- D_MAX / 2        # regla general del libro
+CUTOFF_CORR  <- 50               # donde el correlograma cruza cero (Paso 5)
+
+cat(sprintf("\nDistancia maxima entre estaciones: %.1f km\n", D_MAX))
+cat(sprintf("Cutoff regla del libro (mitad):    %.1f km\n", CUTOFF_LIBRO))
+cat(sprintf("Cutoff por comportamiento erratico: %.1f km  (correlograma, Paso 5)\n", CUTOFF_CORR))
+
+# ---- 6.3 Los tres modelos validos de la Lecture -----------------------------
+mod_esferico <- function(h, c0, c1, a)
+  ifelse(h <= a, c0 + c1 * (1.5 * (h / a) - 0.5 * (h / a)^3), c0 + c1)
+mod_exponencial <- function(h, c0, c1, a) c0 + c1 * (1 - exp(-h / a))
+mod_gaussiano   <- function(h, c0, c1, a) c0 + c1 * (1 - exp(-(h / a)^2))
+
+MODELOS <- list(esferico = mod_esferico, exponencial = mod_exponencial,
+                gaussiano = mod_gaussiano)
+
+# Ajuste por minimos cuadrados ordinarios sobre el semivariograma empirico
+# (libro, seccion 3.1), con optim L-BFGS-B y varios arranques porque los
+# modelos no son lineales en los parametros.
+ajustar_modelo <- function(sv, fn) {
+  sce <- function(th) sum((sv$gamma - fn(sv$h, th[1], th[2], th[3]))^2)
+  arranques <- quantile(sv$h, c(0.1, 0.25, 0.5, 0.75))
+  cand <- lapply(arranques, function(a0)
+    optim(c(c0 = 0, c1 = max(sv$gamma), a = a0), sce, method = "L-BFGS-B",
+          lower = c(0, 0.01, 1),
+          upper = c(max(sv$gamma), 5 * max(sv$gamma), 3 * max(sv$h))))
+  mejor <- cand[[which.min(sapply(cand, function(x) x$value))]]
+  c(c0 = unname(mejor$par[1]), c1 = unname(mejor$par[2]),
+    a = unname(mejor$par[3]), SCE = mejor$value)
+}
+
+# ---- 6.4 Rejilla de ajustes: 2 tendencias x 2 cutoffs x 3 modelos -----------
+rejilla <- expand.grid(tendencia = names(residuales_tend),
+                       cutoff = c(CUTOFF_LIBRO, CUTOFF_CORR),
+                       modelo = names(MODELOS), stringsAsFactors = FALSE)
+
+resultados_sv <- do.call(rbind, lapply(seq_len(nrow(rejilla)), function(i) {
+  fila <- rejilla[i, ]
+  sv <- semivariograma_empirico(residuales_tend[[fila$tendencia]], D, fila$cutoff)
+  aj <- ajustar_modelo(sv, MODELOS[[fila$modelo]])
+  # Rango practico: distancia a la que gamma alcanza el 95% de la meseta
+  rp <- switch(fila$modelo, esferico = aj["a"],
+               exponencial = 3 * aj["a"], gaussiano = sqrt(3) * aj["a"])
+  data.frame(tendencia = fila$tendencia, cutoff_km = round(fila$cutoff, 1),
+             modelo = fila$modelo, pepita = round(aj["c0"], 1),
+             meseta = round(aj["c0"] + aj["c1"], 1),
+             rango_practico_km = round(rp, 1), SCE = round(aj["SCE"], 1),
+             row.names = NULL)
+}))
+
+cat("\n--- Ajustes: 2 tendencias x 2 cutoffs x 3 modelos ---\n")
+print(resultados_sv[order(resultados_sv$tendencia, resultados_sv$cutoff_km,
+                          resultados_sv$SCE), ])
+write.csv(resultados_sv, file.path(DIR_SALIDA, "tabla_semivariogramas.csv"),
+          row.names = FALSE)
+
+
+# ---- 6.5 Diagnostico: meseta contra varianza muestral -----------------------
+# Bajo estacionariedad de segundo orden (libro, Definicion 4) la meseta del
+# semivariograma debe aproximar la varianza del proceso. Si la meseta la supera
+# claramente, el semivariograma sigue creciendo: queda tendencia sin modelar y
+# el supuesto no se cumple.
+
+varianzas <- sapply(residuales_tend, var)
+cat("\n--- Meseta estimada contra varianza de los residuales ---\n")
+diag_meseta <- do.call(rbind, lapply(seq_len(nrow(resultados_sv)), function(i) {
+  f <- resultados_sv[i, ]
+  data.frame(tendencia = f$tendencia, cutoff = f$cutoff_km, modelo = f$modelo,
+             meseta = f$meseta,
+             varianza = round(varianzas[[f$tendencia]], 1),
+             razon = round(f$meseta / varianzas[[f$tendencia]], 2),
+             row.names = NULL)
+}))
+diag_meseta$veredicto <- ifelse(abs(diag_meseta$razon - 1) <= 0.25, "coherente",
+                         ifelse(diag_meseta$razon > 1.25, "meseta > varianza: NO estacionario",
+                                "meseta < varianza"))
+print(diag_meseta[order(diag_meseta$tendencia, diag_meseta$cutoff), ])
+write.csv(diag_meseta, file.path(DIR_SALIDA, "tabla_diagnostico_meseta.csv"), row.names = FALSE)
+
+
+# ---- 6.6 Figuras del semivariograma -----------------------------------------
+col_mod <- c(esferico = "#d73027", exponencial = "#1a9850", gaussiano = "#4575b4")
+
+figura_variograma <- function(nombre_tend, cutoff, titulo, archivo) {
+  resid <- residuales_tend[[nombre_tend]]
+  sv <- semivariograma_empirico(resid, D, cutoff)
+  pares_idx <- which(upper.tri(D), arr.ind = TRUE)
+  h_all <- D[upper.tri(D)]
+  g_all <- (resid[pares_idx[, 1]] - resid[pares_idx[, 2]])^2 / 2
+  en <- h_all <= cutoff
+
+  figura(archivo, {
+    par(mar = c(4.5, 4.5, 3.5, 1))
+    plot(h_all[en], g_all[en], pch = 20, col = "grey80", cex = 0.6, las = 1,
+         xlab = "Distancia h (km)", ylab = expression(gamma(h)),
+         main = titulo, ylim = c(0, quantile(sv$gamma, 1) * 1.9))
+    abline(h = var(resid), col = "grey30", lty = 3, lwd = 2)
+    hs <- seq(0, cutoff, length.out = 250)
+    for (m in names(MODELOS)) {
+      aj <- ajustar_modelo(sv, MODELOS[[m]])
+      lines(hs, MODELOS[[m]](hs, aj["c0"], aj["c1"], aj["a"]),
+            col = col_mod[m], lwd = 2.5)
+    }
+    points(sv$h, sv$gamma, pch = 19, col = "black", cex = 1.5)
+    legend("bottomright", bty = "o", bg = "white", cex = 0.75,
+           legend = c("nube de pares", "semivariograma empirico",
+                      names(MODELOS), "varianza muestral"),
+           col = c("grey80", "black", col_mod, "grey30"),
+           pch = c(20, 19, NA, NA, NA, NA),
+           lty = c(0, 0, 1, 1, 1, 3), lwd = c(0, 0, 2.5, 2.5, 2.5, 2))
+  }, ancho = 2000, alto = 1500)
+}
+
+figura_variograma("lineal", CUTOFF_CORR,
+  sprintf("Tendencia LINEAL - cutoff %g km", CUTOFF_CORR),
+  "fig11a_variograma_lineal.png")
+figura_variograma("cuadratica", CUTOFF_CORR,
+  sprintf("Tendencia CUADRATICA - cutoff %g km", CUTOFF_CORR),
+  "fig11b_variograma_cuadratica.png")
+figura_variograma("cuadratica", CUTOFF_LIBRO,
+  sprintf("Tendencia CUADRATICA - cutoff %.0f km (regla del libro)", CUTOFF_LIBRO),
+  "fig11c_variograma_cuadratica_libro.png")
+
+
+################################################################################
+# PASO 7. KRIGING
+#
+# Lecture_SpatialStatistics.pdf:
+#   "Kriging is a geostatistical interpolation method that provides the Best
+#    Linear Unbiased Predictor (BLUP) of Z at an unsampled location s0"
+#   ec. (15)  Z_hat(s0) = SUM lambda_i Z(s_i)
+#   ec. (16)  los pesos minimizan la varianza de prediccion
+#             sujeto a SUM lambda_i = 1, resuelto con multiplicador de Lagrange.
+#
+# Se predice el RESIDUO por kriging ordinario y se le suma la tendencia
+# (libro, Definicion 5: Y(s) = mu(s) + Z(s)).
+################################################################################
+
+cat("\n================ PASO 7: KRIGING ================\n")
+
+# ---- 7.1 Funcion de covarianza ----------------------------------------------
+# C(h) = meseta - gamma(h). Asi el efecto pepita entra correcto:
+# C(0) = meseta, y C(0+) = meseta - c0 = c1.
+# (Los scripts de clase usan C(h) = meseta * exp(-h/phi), que solo coincide con
+#  esto para el modelo exponencial SIN pepita.)
+
+CUTOFF <- CUTOFF_CORR   # 50 km, justificado por el correlograma del Paso 5
+
+hacer_C <- function(f) {
+  fn <- MODELOS[[f$modelo]]
+  function(h) unname(f$sill - fn(h, f$c0, f$c1, f$a))
+}
+
+parametros_ajuste <- function(tend, modelo, cutoff = CUTOFF) {
+  sv <- semivariograma_empirico(residuales_tend[[tend]], D, cutoff)
+  aj <- ajustar_modelo(sv, MODELOS[[modelo]])
+  list(tendencia = tend, modelo = modelo, c0 = unname(aj["c0"]),
+       c1 = unname(aj["c1"]), a = unname(aj["a"]),
+       sill = unname(aj["c0"] + aj["c1"]))
+}
+
+# ---- 7.2 Sistema de kriging ordinario sobre los residuos --------------------
+kriging_residuo <- function(s0, coords_obs, resid_obs, Sigma, C_fn) {
+  n_obs <- nrow(coords_obs)
+  d0 <- sqrt((coords_obs[, 1] - s0[1])^2 + (coords_obs[, 2] - s0[2])^2)
+  c0_vec <- C_fn(d0)
+  A <- rbind(cbind(Sigma, rep(1, n_obs)), c(rep(1, n_obs), 0))
+  b <- c(c0_vec, 1)
+  sol <- tryCatch(solve(A, b), error = function(e) NULL)
+  if (is.null(sol)) return(c(pred = NA_real_, var = NA_real_))
+  lambda <- sol[1:n_obs]; mu <- sol[n_obs + 1]
+  c(pred = sum(lambda * resid_obs),
+    var  = max(0, C_fn(0) - sum(lambda * c0_vec) - mu))
+}
+
+# ---- 7.3 Validacion cruzada: 2 tendencias x 3 modelos ----------------------
+# El modelo de covarianza NO se elige por suma de cuadrados sino por desempeno
+# predictivo. El gaussiano ajusta mejor el semivariograma empirico pero produce
+# una matriz de kriging casi singular (autovalor minimo ~1e-5 frente a ~17 del
+# esferico), y con ella los pesos se disparan.
+
+loocv <- function(tend, modelo) {
+  f <- parametros_ajuste(tend, modelo)
+  C_fn <- hacer_C(f)
+  Sigma_full <- matrix(C_fn(as.vector(D)), nrow = n)
+  pred <- numeric(n); vari <- numeric(n)
+  for (i in 1:n) {
+    m_i <- lm(formulas_tendencia[[tend]], data = datos[-i, ])
+    k <- kriging_residuo(coords[i, ], coords[-i, ], residuals(m_i),
+                         Sigma_full[-i, -i], C_fn)
+    pred[i] <- predict(m_i, newdata = datos[i, , drop = FALSE]) + k["pred"]
+    vari[i] <- k["var"]
+  }
+  err <- datos$precip - pred
+  list(ajuste = f, pred = pred, var = vari, err = err,
+       kappa = kappa(rbind(cbind(Sigma_full, 1), c(rep(1, n), 0))),
+       rmse = sqrt(mean(err^2)), mae = mean(abs(err)),
+       r2 = 1 - sum(err^2) / sum((datos$precip - mean(datos$precip))^2),
+       # Si la varianza de kriging esta bien calibrada, sd del error
+       # estandarizado debe rondar 1.
+       sd_z = sd(err / sqrt(vari)))
+}
+
+# Referencia sin kriging: solo la tendencia
+loocv_solo_tendencia <- function(tend) {
+  p <- sapply(1:n, function(i)
+    predict(lm(formulas_tendencia[[tend]], data = datos[-i, ]),
+            newdata = datos[i, , drop = FALSE]))
+  e <- datos$precip - p
+  c(rmse = sqrt(mean(e^2)),
+    r2 = 1 - sum(e^2) / sum((datos$precip - mean(datos$precip))^2))
+}
+
+base_tend <- lapply(names(formulas_tendencia), loocv_solo_tendencia)
+names(base_tend) <- names(formulas_tendencia)
+
+combos <- expand.grid(tendencia = names(formulas_tendencia),
+                      modelo = names(MODELOS), stringsAsFactors = FALSE)
+cv_todos <- lapply(seq_len(nrow(combos)),
+                   function(i) loocv(combos$tendencia[i], combos$modelo[i]))
+names(cv_todos) <- paste(combos$tendencia, combos$modelo, sep = "_")
+
+tabla_cv <- do.call(rbind, lapply(seq_along(cv_todos), function(i) {
+  r <- cv_todos[[i]]; t <- combos$tendencia[i]
+  data.frame(tendencia = t, modelo = combos$modelo[i],
+             RMSE_sin_kriging = round(base_tend[[t]]["rmse"], 2),
+             RMSE_con_kriging = round(r$rmse, 2),
+             mejora_pct = round(100 * (base_tend[[t]]["rmse"] - r$rmse) /
+                                base_tend[[t]]["rmse"], 1),
+             MAE = round(r$mae, 2), R2_CV = round(r$r2, 4),
+             sd_z = round(r$sd_z, 2), kappa = signif(r$kappa, 3),
+             row.names = NULL)
+}))
+tabla_cv <- tabla_cv[order(tabla_cv$RMSE_con_kriging), ]
+
+cat("\n--- Validacion cruzada leave-one-out: 2 tendencias x 3 modelos ---\n")
+print(tabla_cv)
+write.csv(tabla_cv, file.path(DIR_SALIDA, "tabla_validacion_cruzada.csv"), row.names = FALSE)
+
+MEJOR <- names(cv_todos)[which.min(sapply(cv_todos, function(x) x$rmse))]
+cv_mejor <- cv_todos[[MEJOR]]
+TEND_OK <- cv_mejor$ajuste$tendencia
+MOD_OK  <- cv_mejor$ajuste$modelo
+cat(sprintf("\nMejor combinacion: tendencia %s + modelo %s\n", TEND_OK, MOD_OK))
+cat(sprintf("  RMSE %.2f mm | MAE %.2f mm | R2_CV %.4f | sd_z %.2f\n",
+            cv_mejor$rmse, cv_mejor$mae, cv_mejor$r2, cv_mejor$sd_z))
+
+
+# ---- 7.4 Criterio de seleccion: no basta con el RMSE ------------------------
+# Tres filtros, los tres necesarios:
+#   (a) estacionariedad  : meseta ~ varianza de los residuales (libro, Def. 4)
+#   (b) calibracion      : sd del error estandarizado ~ 1, o el mapa de
+#                          incertidumbre no significa nada
+#   (c) estabilidad      : numero de condicion de la matriz de kriging acotado
+# Entre las combinaciones que pasan, se toma la de menor RMSE.
+
+validez <- do.call(rbind, lapply(seq_along(cv_todos), function(i) {
+  r <- cv_todos[[i]]; f <- r$ajuste
+  razon <- f$sill / varianzas[[f$tendencia]]
+  data.frame(tendencia = f$tendencia, modelo = f$modelo,
+             razon_meseta = round(razon, 2),
+             estacionario = abs(razon - 1) <= 0.25,
+             calibrado    = r$sd_z >= 0.80 & r$sd_z <= 1.25,
+             estable      = r$kappa < 1e6,
+             RMSE = round(r$rmse, 2), row.names = NULL)
+}))
+validez$valida <- validez$estacionario & validez$calibrado & validez$estable
+
+cat("\n--- Filtros de validez ---\n")
+print(validez[order(validez$RMSE), ])
+
+candidatas <- which(validez$valida)
+if (length(candidatas) == 0) stop("Ninguna combinacion pasa los tres filtros.")
+idx_ok  <- candidatas[which.min(validez$RMSE[candidatas])]
+cv_ok   <- cv_todos[[idx_ok]]
+TEND_OK <- cv_ok$ajuste$tendencia
+MOD_OK  <- cv_ok$ajuste$modelo
+
+cat(sprintf("\nSELECCION FINAL: tendencia %s + modelo %s\n", TEND_OK, MOD_OK))
+cat(sprintf("  RMSE %.2f mm | MAE %.2f mm | R2_CV %.4f | sd_z %.2f | kappa %.1e\n",
+            cv_ok$rmse, cv_ok$mae, cv_ok$r2, cv_ok$sd_z, cv_ok$kappa))
+cat(sprintf("  pepita %.1f | meseta %.1f | a %.1f km\n",
+            cv_ok$ajuste$c0, cv_ok$ajuste$sill, cv_ok$ajuste$a))
+
+# ---- 7.5 Figuras de validacion ----------------------------------------------
+figura("fig12_validacion_cruzada.png", {
+  par(mfrow = c(1, 3), mar = c(4.5, 4.5, 3.5, 1))
+  lim <- range(c(datos$precip, cv_ok$pred))
+  plot(datos$precip, cv_ok$pred, pch = 21, bg = "#3182bd", cex = 1.3, las = 1,
+       xlim = lim, ylim = lim, xlab = "Observado (mm)", ylab = "Predicho LOOCV (mm)",
+       main = sprintf("(A) Observado vs predicho\nR2 = %.3f", cv_ok$r2))
+  abline(0, 1, col = "red", lwd = 2, lty = 2); grid(col = "grey85")
+  plot(cv_ok$pred, cv_ok$err, pch = 21, bg = "#e6550d", cex = 1.3, las = 1,
+       xlab = "Predicho (mm)", ylab = "Error (obs - pred, mm)",
+       main = sprintf("(B) Residuos de validacion\nRMSE = %.2f mm", cv_ok$rmse))
+  abline(h = 0, col = "red", lwd = 2, lty = 2); grid(col = "grey85")
+  z <- cv_ok$err / sqrt(cv_ok$var)
+  qqnorm(z, pch = 21, bg = "#756bb1", cex = 1.3, las = 1,
+         main = sprintf("(C) Error estandarizado\nsd = %.2f (ideal 1)", cv_ok$sd_z))
+  qqline(z, col = "red", lwd = 2)
+  par(mfrow = c(1, 1))
+}, ancho = 2800, alto = 1100)
+
+# Mapa del error de validacion: donde falla el modelo
+figura("fig13_mapa_error_loocv.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  tam <- 0.7 + abs(cv_ok$err) / max(abs(cv_ok$err)) * 2.3
+  col <- ifelse(cv_ok$err >= 0, "#d73027", "#4575b4")
+  plot(borde, border = "grey40", las = 1, xlab = "Longitud", ylab = "Latitud",
+       main = sprintf("Error de validacion cruzada (RMSE = %.2f mm)", cv_ok$rmse))
+  points(datos$lon, datos$lat, pch = 21, bg = col, cex = tam)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.78, pch = 21, pt.cex = 1.6,
+         pt.bg = c("#d73027", "#4575b4"),
+         legend = c("Subestima (+)", "Sobreestima (-)"))
+}, ancho = 1700, alto = 1900)
+
+
+################################################################################
+# PASO 8. PREDICCION ESPACIAL SOBRE TODO EL DEPARTAMENTO
+################################################################################
+
+cat("\n================ PASO 8: PREDICCION ================\n")
+
+# ---- 8.1 Grilla de prediccion ----------------------------------------------
+celdas <- crds(mask(r_alt, mascara, maskvalues = c(FALSE, NA)), na.rm = TRUE)
+grilla <- data.frame(
+  lon = celdas[, 1], lat = celdas[, 2],
+  altitud = extract(r_alt, celdas)[, 1],
+  observado = extract(precip, celdas)[, 1])
+grilla <- na.omit(grilla)
+# Misma proyeccion que las estaciones: mismos lon0 y lat0
+grilla$x_km <- (grilla$lon - lon0) * 111.320 * cos(lat0 * pi / 180)
+grilla$y_km <- (grilla$lat - lat0) * 110.574
+
+cat(sprintf("Celdas a predecir: %d\n", nrow(grilla)))
+
+# ---- 8.2 Kriging sobre la grilla -------------------------------------------
+f_ok  <- cv_ok$ajuste
+C_ok  <- hacer_C(f_ok)
+mod_ok <- lm(formulas_tendencia[[TEND_OK]], data = datos)
+resid_ok <- residuals(mod_ok)
+Sigma_ok <- matrix(C_ok(as.vector(D)), nrow = n)
+
+grilla$tendencia <- predict(mod_ok, newdata = grilla)
+krg <- t(sapply(seq_len(nrow(grilla)), function(k)
+  kriging_residuo(c(grilla$x_km[k], grilla$y_km[k]), coords, resid_ok, Sigma_ok, C_ok)))
+grilla$residuo   <- krg[, "pred"]
+grilla$prediccion <- grilla$tendencia + grilla$residuo
+grilla$sd_krig   <- sqrt(krg[, "var"])
+
+cat(sprintf("Prediccion: min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$prediccion), mean(grilla$prediccion), max(grilla$prediccion)))
+cat(sprintf("Observado : min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$observado), mean(grilla$observado), max(grilla$observado)))
+cat(sprintf("Incertidumbre (sd de kriging): min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$sd_krig), mean(grilla$sd_krig), max(grilla$sd_krig)))
+
+# Contraste contra el valor real en las celdas que NO contienen estacion.
+# OJO: spatSample() devuelve puntos aleatorios dentro del poligono, no centros
+# de celda, asi que comparar coordenadas no sirve. Hay que identificar la celda
+# que contiene cada estacion con cellFromXY().
+# Indice de celda calculado a mano (cellFromXY no aparece en los scripts de
+# clase): columna y fila salen de la esquina superior izquierda y la resolucion.
+indice_celda <- function(lon, lat) {
+  e <- unname(as.vector(ext(r_alt))); rr <- res(r_alt)
+  col <- floor((lon - e[1]) / rr[1])
+  fil <- floor((e[4] - lat) / rr[2])
+  fil * ncol(r_alt) + col + 1
+}
+celda_estacion <- unique(indice_celda(datos$lon, datos$lat))
+celda_grilla   <- indice_celda(grilla$lon, grilla$lat)
+no_muestreadas <- !(celda_grilla %in% celda_estacion)
+err_grilla <- grilla$observado - grilla$prediccion
+
+cat(sprintf("\nEstaciones: %d, repartidas en %d celdas distintas (%d comparten celda)\n",
+            n, length(celda_estacion), n - length(celda_estacion)))
+cat(sprintf("RMSE en las %d celdas CON estacion : %.2f mm\n",
+            sum(!no_muestreadas), sqrt(mean(err_grilla[!no_muestreadas]^2))))
+cat(sprintf("RMSE en las %d celdas SIN estacion : %.2f mm  <- el numero honesto\n",
+            sum(no_muestreadas), sqrt(mean(err_grilla[no_muestreadas]^2))))
+cat(sprintf("R2 en las celdas sin estacion      : %.4f\n",
+            1 - sum(err_grilla[no_muestreadas]^2) /
+                sum((grilla$observado[no_muestreadas] - mean(grilla$observado[no_muestreadas]))^2)))
+
+# ---- 8.3 Rasters de salida --------------------------------------------------
+a_raster <- function(col) {
+  r <- rast(grilla[, c("lon", "lat", col)], type = "xyz", crs = crs(r_alt))
+  mask(r, mascara, maskvalues = c(FALSE, NA))
+}
+r_pred <- a_raster("prediccion"); r_sd <- a_raster("sd_krig")
+r_tend <- a_raster("tendencia");  r_res <- a_raster("residuo")
+r_err  <- a_raster("observado") - r_pred
+
+writeRaster(r_pred, file.path(DIR_SALIDA, "raster_precipitacion_estimada.tif"), overwrite = TRUE)
+writeRaster(r_sd,   file.path(DIR_SALIDA, "raster_incertidumbre.tif"), overwrite = TRUE)
+
+# ---- 8.4 Mapas --------------------------------------------------------------
+mapa_raster <- function(r, titulo, paleta, estaciones = TRUE) {
+  plot(r, col = paleta, las = 1, main = titulo, xlab = "Longitud", ylab = "Latitud")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  if (estaciones) points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.7, lwd = 1.1)
+}
+
+pal_lluvia <- colorRampPalette(c("#fff7ec", "#fdbb84", "#41ab5d", "#238443", "#00441b"))(60)
+pal_incert <- colorRampPalette(c("#ffffcc", "#fd8d3c", "#bd0026"))(60)
+pal_div    <- colorRampPalette(c("#4575b4", "#ffffbf", "#d73027"))(60)
+
+# Mapa principal: prediccion
+figura("fig14_mapa_prediccion.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_pred, "Precipitacion semanal estimada (mm) - semana 44", pal_lluvia)
+}, ancho = 1700, alto = 1900)
+
+# Mapa de incertidumbre
+figura("fig15_mapa_incertidumbre.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_sd, "Incertidumbre: desviacion estandar de kriging (mm)", pal_incert)
+}, ancho = 1700, alto = 1900)
+
+# Descomposicion: tendencia y residuo espacial
+figura("fig16_descomposicion.png", {
+  par(mfrow = c(1, 2), mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_tend, "(A) Componente de tendencia", pal_lluvia, estaciones = FALSE)
+  mapa_raster(r_res, "(B) Componente residual (kriging)", pal_div)
+  par(mfrow = c(1, 1))
+}, ancho = 3000, alto = 1700)
+
+# Observado contra estimado, misma escala
+figura("fig17_observado_vs_estimado.png", {
+  par(mfrow = c(1, 2), mar = c(4, 4, 3.5, 4.5))
+  rng <- range(c(values(precip), values(r_pred)), na.rm = TRUE)
+  plot(precip, col = pal_lluvia, range = rng, las = 1, xlab = "Longitud",
+       ylab = "Latitud", main = "(A) CHIRPS observado")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  plot(r_pred, col = pal_lluvia, range = rng, las = 1, xlab = "Longitud",
+       ylab = "Latitud", main = "(B) Kriging desde 70 estaciones")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.7, lwd = 1.1)
+  par(mfrow = c(1, 1))
+}, ancho = 3000, alto = 1700)
+
+# Mapa del error de reconstruccion
+figura("fig18_mapa_error.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_err, sprintf("Error de reconstruccion: observado - estimado (mm)\nRMSE = %.2f mm",
+                             sqrt(mean(err_grilla[no_muestreadas]^2))), pal_div)
+}, ancho = 1700, alto = 1900)
