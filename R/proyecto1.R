@@ -28,6 +28,34 @@ if (!dir.exists(DIR_SALIDA)) dir.create(DIR_SALIDA, recursive = TRUE)
 stopifnot(dir.exists(DIR_DATOS))
 
 
+# ---- Helper de figuras ------------------------------------------------------
+# Problema: si solo se llama plot(), la figura vive en el panel de RStudio y se
+# pierde. Si solo se llama png()/dev.off(), va al archivo pero no se ve.
+# Esta funcion hace las dos cosas: evalua el mismo bloque de dibujo dos veces,
+# una contra la pantalla y otra contra el PNG.
+#
+# Uso:
+#   figura("fig02_borde.png", {
+#     plot(precip)
+#     plot(borde, add = TRUE)
+#   })
+
+figura <- function(nombre, expr, ancho = 2000, alto = 1800, res = 300) {
+  bloque <- substitute(expr)          # captura el codigo SIN ejecutarlo
+  entorno <- parent.frame()           # ...para correrlo donde fue escrito
+
+  eval(bloque, entorno)               # 1) a la pantalla
+
+  ruta <- file.path(DIR_SALIDA, nombre)
+  png(ruta, width = ancho, height = alto, res = res)
+  eval(bloque, entorno)               # 2) al archivo
+  dev.off()
+
+  cat(sprintf("  [figura] %s\n", ruta))
+  invisible(ruta)
+}
+
+
 ################################################################################
 # PASO 1. AUDITORIA DE LOS DATOS
 #
@@ -183,17 +211,54 @@ cat(sprintf("Semana mas lluviosa (climatologia 2010-2025): %d (%.1f mm)\n",
 cat(sprintf("Semana mas seca: %d (%.1f mm)\n",
             which.min(media_semanal), min(media_semanal)))
 
-png(file.path(DIR_SALIDA, "fig01_ciclo_anual.png"),
-    width = 2000, height = 1100, res = 300)
-par(mar = c(4.5, 4.5, 3, 1))
-plot(1:52, media_semanal, type = "o", pch = 19, cex = 0.6, col = "#08519c",
-     xlab = "Semana ISO", ylab = "Precipitacion media del departamento (mm)",
-     main = "Ciclo anual de precipitacion - Valle del Cauca (CHIRPS 2010-2025)",
-     las = 1)
-abline(v = SEMANA, col = "red", lty = 2, lwd = 2)
-text(SEMANA, media_semanal[SEMANA], labels = paste0("  Semana ", SEMANA),
-     pos = 4, col = "red", cex = 0.8)
-grid(col = "grey85")
-dev.off()
+figura("fig01_ciclo_anual.png", {
+  par(mar = c(4.5, 4.5, 3, 1))
+  plot(1:52, media_semanal, type = "o", pch = 19, cex = 0.6, col = "#08519c",
+       xlab = "Semana ISO", ylab = "Precipitacion media del departamento (mm)",
+       main = "Ciclo anual de precipitacion - Valle del Cauca (CHIRPS 2010-2025)",
+       las = 1)
+  abline(v = SEMANA, col = "red", lty = 2, lwd = 2)
+  text(SEMANA, media_semanal[SEMANA], labels = paste0("  Semana ", SEMANA),
+       pos = 4, col = "red", cex = 0.8)
+  grid(col = "grey85")
+}, ancho = 2000, alto = 1100)
 
 cat(sprintf("\n[OK] Paso 1 terminado. Semana de trabajo fijada en %d.\n", SEMANA))
+
+
+################################################################################
+# PASO 2. PUNTOS DE MUESTREO
+#
+# El molde del curso (Ejemplo4_Geoestadistica.R, lineas 21-35) construye el
+# borde real del area a partir de la mascara y sortea puntos dentro de el.
+################################################################################
+
+cat("\n================ PASO 2: PUNTOS DE MUESTREO ================\n\n")
+
+# ---- 2.1 Borde real del departamento ----------------------------------------
+# as.polygons() convierte los pixeles TRUE de la mascara en un poligono.
+# Devuelve DOS poligonos: el de los TRUE (atributo 1) y el de los FALSE (0).
+# Hay que quedarse con el 1; si no, el "borde" incluye el oceano Pacifico.
+
+# CHIRPS tiene 787 celdas con dato y SRTM 688: CHIRPS desborda el departamento
+# y cubre mar abierto. Sin recortar, el mapa pinta lluvia sobre el Pacifico.
+# maskvalues = c(FALSE, NA) deja fuera tanto los FALSE como los NA de la mascara.
+precip <- mask(r_precip[[SEMANA]], mascara, maskvalues = c(FALSE, NA))
+
+cat(sprintf("Celdas de CHIRPS antes del recorte: %d\n",
+            sum(!is.na(values(r_precip[[SEMANA]])))))
+cat(sprintf("Celdas tras recortar al area de estudio: %d\n",
+            sum(!is.na(values(precip)))))
+
+borde <- as.polygons(mascara, dissolve = TRUE)
+borde <- borde[borde[[1]] == 1, ]
+
+cat(sprintf("Poligonos devueltos por as.polygons(): %d\n", nrow(as.polygons(mascara, dissolve = TRUE))))
+cat(sprintf("Area del borde conservado: %.0f km2\n", expanse(borde, unit = "km")))
+
+figura("fig02_borde_valle.png", {
+  par(mar = c(4, 4, 3, 4))
+  plot(precip, main = "Precipitacion semana 44 (mm) - Valle del Cauca",
+       xlab = "Longitud", ylab = "Latitud", las = 1)
+  plot(borde, add = TRUE, border = "black", lwd = 1.5)
+}, ancho = 1800, alto = 1900)
