@@ -25,6 +25,14 @@ DIR_DATOS <- "data/datos_proyecto_1/imagenes_semanales"
 DIR_SALIDA <- "resultados"
 if (!dir.exists(DIR_SALIDA)) dir.create(DIR_SALIDA, recursive = TRUE)
 
+# Reproducibilidad: los .tif no se versionan (son derivados). Si no estan,
+# se extraen del zip original, que si esta en el repo.
+if (!dir.exists(DIR_DATOS)) {
+  zip_datos <- "data/datos_proyecto_1.zip"
+  if (!file.exists(zip_datos)) stop("No se encuentra ", zip_datos)
+  cat("Descomprimiendo el dataset original...\n")
+  unzip(zip_datos, exdir = "data")
+}
 stopifnot(dir.exists(DIR_DATOS))
 
 
@@ -276,7 +284,13 @@ borde <- as.polygons(mascara, dissolve = TRUE)
 borde <- borde[borde[[1]] == 1, ]
 
 cat(sprintf("Poligonos devueltos por as.polygons(): %d\n", nrow(as.polygons(mascara, dissolve = TRUE))))
-cat(sprintf("Area del borde conservado: %.0f km2\n", expanse(borde, unit = "km")))
+# Area por conteo de celdas: expanse() no aparece en los scripts de clase.
+# Cada celda mide res_lon*111.320*cos(lat) por res_lat*110.574 kilometros.
+lat_media <- mean(as.vector(ext(borde))[3:4])
+area_celda <- (res(r_alt)[1] * 111.320 * cos(lat_media * pi / 180)) *
+              (res(r_alt)[2] * 110.574)
+cat(sprintf("Area del borde conservado: %.0f km2 (%d celdas x %.1f km2)\n",
+            N_VALLE * area_celda, N_VALLE, area_celda))
 
 figura("fig02_borde_valle.png", {
   par(mar = c(4, 4, 3, 4))
@@ -1153,8 +1167,16 @@ cat(sprintf("Incertidumbre (sd de kriging): min %.1f  media %.1f  max %.1f mm\n"
 # OJO: spatSample() devuelve puntos aleatorios dentro del poligono, no centros
 # de celda, asi que comparar coordenadas no sirve. Hay que identificar la celda
 # que contiene cada estacion con cellFromXY().
-celda_estacion <- unique(cellFromXY(r_alt, cbind(datos$lon, datos$lat)))
-celda_grilla   <- cellFromXY(r_alt, cbind(grilla$lon, grilla$lat))
+# Indice de celda calculado a mano (cellFromXY no aparece en los scripts de
+# clase): columna y fila salen de la esquina superior izquierda y la resolucion.
+indice_celda <- function(lon, lat) {
+  e <- unname(as.vector(ext(r_alt))); rr <- res(r_alt)
+  col <- floor((lon - e[1]) / rr[1])
+  fil <- floor((e[4] - lat) / rr[2])
+  fil * ncol(r_alt) + col + 1
+}
+celda_estacion <- unique(indice_celda(datos$lon, datos$lat))
+celda_grilla   <- indice_celda(grilla$lon, grilla$lat)
 no_muestreadas <- !(celda_grilla %in% celda_estacion)
 err_grilla <- grilla$observado - grilla$prediccion
 
