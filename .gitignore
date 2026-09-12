@@ -8,11 +8,20 @@
 data/datos_proyecto_1/
 *.tif
 
-# Salidas intermedias
-resultados/*.png
-resultados/*.pdf
-!resultados/.gitkeep
+# Las figuras y tablas de resultados SI se versionan: son el control de avance
+# del grupo y van directo al informe. Se regeneran con: Rscript R/proyecto1.R
 
 # SO
 .DS_Store
 Thumbs.db
+
+# Material de clase traido de Ares (113 MB, propiedad del profesor).
+# Sirve para verificar que solo usamos metodos vistos en clase; no es entregable.
+material_clase/
+
+# Material de clase pesado (libros/papers del profesor, repo PUBLICO)
+material_clase/carpeta/Section1_Week_3.zip
+
+# Rscript abre este dispositivo cuando no hay pantalla (el "dibuja en pantalla"
+# del helper figura()). En RStudio no aparece; con Rscript sí. Es basura.
+Rplots.pdf
