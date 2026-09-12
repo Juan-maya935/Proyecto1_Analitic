@@ -65,6 +65,28 @@ figura <- function(nombre, expr, ancho = 2000, alto = 1800, res = 300) {
 
 cat("\n================ PASO 1: AUDITORIA DE LOS DATOS ================\n\n")
 
+# ---- Helper de mapas --------------------------------------------------------
+# plot() sobre un SpatVector ajusta la region de dibujo al poligono exacto y no
+# deja margen: cualquier legend() se sale del area y se corta. Este helper abre
+# un lienzo vacio con espacio extra abajo y dibuja el borde encima.
+
+mapa_base <- function(borde, titulo, ...) {
+  plot(borde, border = "grey40", las = 1, main = titulo,
+       xlab = "Longitud", ylab = "Latitud", ...)
+}
+
+# terra::plot deja el area de dibujo pegada al borde del poligono, asi que
+# legend("topleft") se recorta por arriba. Esta funcion devuelve un punto
+# seguro dentro del hueco del noroeste del departamento.
+# OJO: as.vector(ext()) devuelve un vector CON NOMBRES (xmin, xmax, ymin, ymax).
+# Sin unname(), c(x = e[1], ...) produce el nombre "x.xmin" y lg["x"] da NA;
+# legend(NA, NA, ...) no dibuja nada y no lanza ningun error.
+esquina_leyenda <- function(borde, baja = 0.08) {
+  e <- unname(as.vector(ext(borde)))
+  c(x = e[1], y = e[4] - baja * (e[4] - e[3]))
+}
+
+
 # ---- 1.1 Carga de las capas -------------------------------------------------
 # Climatologia = promedio historico 2010-2025 por semana ISO (52 bandas).
 # Se usa la climatologia y no un anio suelto para que la senal espacial no
@@ -352,11 +374,10 @@ figura("fig03_distribucion.png", {
 figura("fig04_posting.png", {
   par(mar = c(4.5, 4.5, 3, 1))
   tam <- 0.6 + (datos$precip - min(datos$precip)) / diff(range(datos$precip)) * 2.4
-  plot(borde, border = "grey40", las = 1,
-       main = "Mapa de posting: estaciones simuladas (semana 44)",
-       xlab = "Longitud", ylab = "Latitud")
+  mapa_base(borde, "Mapa de posting: estaciones simuladas (semana 44)")
   points(datos$lon, datos$lat, pch = 21, bg = "#3182bd", cex = tam)
-  legend("topright", bty = "o", bg = "white", cex = 0.75, pt.cex = c(0.8, 1.8, 3.0),
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.8, pt.cex = c(0.8, 1.8, 3.0),
          pch = 21, pt.bg = "#3182bd",
          legend = c("~35 mm", "~110 mm", "~190 mm"))
 }, ancho = 1800, alto = 1900)
@@ -467,51 +488,116 @@ for (b in levels(datos$banda)) {
 cat(sprintf("  %-18s n=%2d   pendiente = %+.4f mm/m  <- agrupado\n",
             "TODOS JUNTOS", nrow(datos), coef(lm(precip ~ altitud, data = datos))[2]))
 
-figura("fig07_confusion_altitud.png", {
-  par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1))
-
-  # (A) La colinealidad: altitud contra longitud
-  plot(datos$x_km, datos$altitud, pch = 21, bg = pal_lon[idx_lon], cex = 1.3, las = 1,
+# --- 4.3a La colinealidad: altitud contra longitud ---
+figura("fig07a_colinealidad.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(datos$x_km, datos$altitud, pch = 21, bg = pal_lon[idx_lon], cex = 1.5, las = 1,
        xlab = "Coordenada Este (km)", ylab = "Altitud SRTM (m)",
-       main = sprintf("(A) Altitud y longitud van juntas\nr = %.3f",
+       main = sprintf("Altitud y longitud van juntas (r = %.3f)",
                       cor(datos$x_km, datos$altitud)))
   abline(lm(altitud ~ x_km, data = datos), col = "black", lwd = 2)
+  legend("topleft", bty = "n", cex = 0.8, pch = 21, pt.bg = col_banda,
+         legend = levels(datos$banda))
+}, ancho = 1800, alto = 1500)
 
-  # (B) La correlacion simple: enganyosa
-  plot(datos$altitud, datos$precip, pch = 21, bg = pal_lon[idx_lon], cex = 1.3, las = 1,
+# --- 4.3b La correlacion simple, enganyosa ---
+figura("fig07b_correlacion_simple.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(datos$altitud, datos$precip, pch = 21, bg = pal_lon[idx_lon], cex = 1.5, las = 1,
        xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
-       main = sprintf("(B) Correlacion simple: r = %.3f\n'mas alto = mas seco' (FALSO)",
+       main = sprintf("Correlacion simple r = %.3f: 'mas alto = mas seco' (FALSO)",
                       cor(datos$altitud, datos$precip)))
   abline(lm(precip ~ altitud, data = datos), col = "red", lwd = 2.5)
-  legend("topright", bty = "n", cex = 0.7, pch = 21, pt.bg = col_banda,
-         legend = c("Oeste", "Centro", "Este"), title = "Longitud")
+  legend("topright", bty = "n", cex = 0.8, pch = 21, pt.bg = col_banda,
+         legend = levels(datos$banda), title = "Banda de longitud")
+}, ancho = 1800, alto = 1500)
 
-  # (C) Estratificado: dentro de cada banda la pendiente cambia de signo
+# --- 4.3c Estratificado por banda de longitud ---
+figura("fig07c_estratificado.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
   plot(datos$altitud, datos$precip, type = "n", las = 1,
        xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
-       main = "(C) Estratificado por longitud:\nel efecto de la altitud NO es homogeneo")
+       main = "Estratificado por longitud: el efecto de la altitud NO es homogeneo")
   for (k in seq_along(levels(datos$banda))) {
     sub <- datos[datos$banda == levels(datos$banda)[k], ]
-    points(sub$altitud, sub$precip, pch = 21, bg = col_banda[k], cex = 1.3)
-    if (nrow(sub) > 2) {
-      aj <- lm(precip ~ altitud, data = sub)
-      xs <- range(sub$altitud)
-      lines(xs, predict(aj, data.frame(altitud = xs)), col = col_banda[k], lwd = 2.5)
-    }
+    points(sub$altitud, sub$precip, pch = 21, bg = col_banda[k], cex = 1.5)
+    aj <- lm(precip ~ altitud, data = sub); xs <- range(sub$altitud)
+    lines(xs, predict(aj, data.frame(altitud = xs)), col = col_banda[k], lwd = 3)
   }
-  legend("topright", bty = "n", cex = 0.7, lwd = 2.5, col = col_banda,
-         legend = levels(datos$banda))
+  legend("topright", bty = "n", cex = 0.85, lwd = 3, col = col_banda,
+         legend = sprintf("%s: %+.4f mm/m", levels(datos$banda),
+                          sapply(levels(datos$banda), function(b)
+                            coef(lm(precip ~ altitud, data = datos[datos$banda == b, ]))[2])))
+}, ancho = 1800, alto = 1500)
 
-  # (D) Grafico de variable anyadida: el efecto REAL de la altitud
+# --- 4.3d Grafico de variable anyadida: el efecto parcial real ---
+figura("fig07d_variable_anyadida.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
   res_precip  <- residuals(lm(precip  ~ x_km + y_km, data = datos))
   res_altitud <- residuals(lm(altitud ~ x_km + y_km, data = datos))
-  pend_parcial <- coef(lm(res_precip ~ res_altitud))[2]
-  plot(res_altitud, res_precip, pch = 21, bg = "#4575b4", cex = 1.3, las = 1,
+  plot(res_altitud, res_precip, pch = 21, bg = "#4575b4", cex = 1.5, las = 1,
        xlab = "Altitud | quitada la posicion (m)",
        ylab = "Precipitacion | quitada la posicion (mm)",
-       main = sprintf("(D) Efecto parcial de la altitud\npendiente = %+.4f mm/m", pend_parcial))
+       main = sprintf("Efecto parcial de la altitud = %+.4f mm/m",
+                      coef(lm(res_precip ~ res_altitud))[2]))
   abline(lm(res_precip ~ res_altitud), col = "blue", lwd = 2.5)
   abline(h = 0, v = 0, col = "grey70", lty = 3)
+}, ancho = 1800, alto = 1500)
 
+
+# ---- 4.4 Las mismas relaciones, sobre el mapa -------------------------------
+# Los graficos anteriores son en el espacio de las variables. Estos son en el
+# espacio geografico: muestran DONDE ocurre cada cosa.
+
+# --- 4.4a Las tres bandas de longitud sobre el territorio ---
+figura("fig08a_mapa_bandas.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  mapa_base(borde, "Bandas de longitud del analisis estratificado")
+  for (k in seq_along(levels(datos$banda))) {
+    sub <- datos[datos$banda == levels(datos$banda)[k], ]
+    points(sub$lon, sub$lat, pch = 21, bg = col_banda[k], cex = 1.6)
+  }
+  abline(v = lon0 + cortes_x[2:3] / (111.320 * cos(lat0 * pi / 180)),
+         col = "grey30", lty = 2, lwd = 2)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.8, pch = 21, pt.cex = 1.4,
+         pt.bg = col_banda, legend = levels(datos$banda))
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4b Altitud del terreno con las estaciones encima ---
+figura("fig08b_mapa_altitud.png", {
+  par(mar = c(4, 4, 3.5, 4))
+  plot(mask(r_alt, mascara, maskvalues = c(FALSE, NA)),
+       col = terrain.colors(50), las = 1,
+       main = "Altitud SRTM (m) y estaciones simuladas",
+       xlab = "Longitud", ylab = "Latitud")
+  plot(borde, add = TRUE, border = "black", lwd = 1.2)
+  points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.9, lwd = 1.4)
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4c Residuales sobre el mapa: azul negativo, rojo positivo ---
+# Si los colores aparecen agrupados en manchas, hay autocorrelacion espacial
+# remanente y el kriging tiene trabajo que hacer.
+figura("fig08c_mapa_residuales.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  tam_res <- 0.7 + abs(datos$residual) / max(abs(datos$residual)) * 2.3
+  col_res <- ifelse(datos$residual >= 0, "#d73027", "#4575b4")
+  mapa_base(borde, "Residuales de la tendencia (rojo +, azul -)")
+  points(datos$lon, datos$lat, pch = 21, bg = col_res, cex = tam_res)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.78, pch = 21,
+         pt.bg = c("#d73027", "#4575b4"), pt.cex = 1.6,
+         legend = c("Subestima el modelo (+)", "Sobreestima el modelo (-)"))
+}, ancho = 1700, alto = 1900)
+
+# --- 4.4d Observado contra ajustado, lado a lado en el mapa ---
+figura("fig08d_mapa_obs_vs_tendencia.png", {
+  par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3.5, 1))
+  rango <- range(c(datos$precip, datos$tendencia))
+  escala <- function(v) 0.6 + (v - rango[1]) / diff(rango) * 2.4
+  mapa_base(borde, "(A) Precipitacion observada", margen_inf = 0)
+  points(datos$lon, datos$lat, pch = 21, bg = "#3182bd", cex = escala(datos$precip))
+  mapa_base(borde, "(B) Tendencia ajustada por el modelo", margen_inf = 0)
+  points(datos$lon, datos$lat, pch = 21, bg = "#31a354", cex = escala(datos$tendencia))
   par(mfrow = c(1, 1))
-}, ancho = 2600, alto = 2400)
+}, ancho = 3000, alto = 1700)
