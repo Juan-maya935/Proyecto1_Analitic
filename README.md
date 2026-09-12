@@ -24,7 +24,7 @@ Profesor: **Johann A. Ospina** — jaospina@uao.edu.co
 |---|---|---|
 | César Reyes | 2236379 | |
 | Yesenia Diaz|2231783  | |
-| | | 
+| Juan Pablo Maya |2236377 | 
 | | | |
 
 ---
