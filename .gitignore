@@ -16,3 +16,7 @@ resultados/*.pdf
 # SO
 .DS_Store
 Thumbs.db
+
+# Material de clase traido de Ares (113 MB, propiedad del profesor).
+# Sirve para verificar que solo usamos metodos vistos en clase; no es entregable.
+material_clase/
