@@ -601,3 +601,132 @@ figura("fig08d_mapa_obs_vs_tendencia.png", {
   points(datos$lon, datos$lat, pch = 21, bg = "#31a354", cex = escala(datos$tendencia))
   par(mfrow = c(1, 1))
 }, ancho = 3000, alto = 1700)
+
+
+################################################################################
+# PASO 5. AUTOCORRELACION ESPACIAL (MORAN Y GEARY)
+#
+# Es el corazon del enunciado: "evaluar el papel de la correlacion espacial".
+# Indices calculados a mano segun carpeta/Script_Spatial_Analytics.R.
+################################################################################
+
+cat("\n================ PASO 5: AUTOCORRELACION ESPACIAL ================\n")
+
+coords <- as.matrix(datos[, c("x_km", "y_km")])
+D <- as.matrix(dist(coords))       # matriz de distancias, idioma de Ejemplo4
+
+# ---- 5.1 Matriz de pesos e indices ------------------------------------------
+# OJO: el script de clase estandariza las filas con
+#   W <- matrix(ifelse(row_sums == 0, 0, W / row_sums), nrow = n, ncol = n)
+# ifelse() devuelve un objeto del largo del TEST (n), no del resultado (n^2):
+# se queda con la primera columna y matrix() la recicla, asi que la
+# estandarizacion NO ocurre y las filas no suman 1. Aqui se usa sweep().
+
+pesos_espaciales <- function(D, q) {
+  n <- nrow(D)
+  umbral <- quantile(D[upper.tri(D)], q)
+  W <- matrix(0, n, n)
+  W[D <= umbral] <- 1
+  diag(W) <- 0
+  filas <- rowSums(W)
+  list(W = sweep(W, 1, ifelse(filas == 0, 1, filas), "/"),
+       umbral = unname(umbral), vecinos = mean(filas))
+}
+
+moran <- function(z, W) {
+  n <- length(z); zc <- z - mean(z)
+  (n / sum(W)) * (sum(W * outer(zc, zc)) / sum(zc^2))
+}
+
+geary <- function(z, W) {
+  n <- length(z); zc <- z - mean(z)
+  ((n - 1) / (2 * sum(W))) * (sum(W * outer(z, z, function(a, b) (a - b)^2)) / sum(zc^2))
+}
+
+# Significancia por permutacion: se re-etiquetan los valores al azar sobre las
+# mismas posiciones. Si la estructura fuera casual, el I observado caeria dentro
+# de la nube de I permutados.
+p_permutacion <- function(z, W, n_perm = 999) {
+  obs <- moran(z, W)
+  set.seed(2026)
+  nulos <- replicate(n_perm, moran(sample(z), W))
+  (1 + sum(nulos >= obs)) / (n_perm + 1)
+}
+
+# ---- 5.2 Sensibilidad al umbral de vecindad ---------------------------------
+# El script de clase usa el percentil 5 de las distancias. La eleccion cambia el
+# resultado, asi que se reporta un rango en vez de un solo numero.
+
+tabla_ac <- do.call(rbind, lapply(c(0.05, 0.10, 0.25), function(q) {
+  pw <- pesos_espaciales(D, q)
+  data.frame(
+    percentil    = q * 100,
+    umbral_km    = pw$umbral,
+    vecinos_prom = pw$vecinos,
+    I_precip     = moran(datos$precip,   pw$W),
+    C_precip     = geary(datos$precip,   pw$W),
+    I_residual   = moran(datos$residual, pw$W),
+    C_residual   = geary(datos$residual, pw$W),
+    p_residual   = p_permutacion(datos$residual, pw$W))
+}))
+
+cat("\n--- Indices por umbral de vecindad ---\n")
+print(format(tabla_ac, digits = 4))
+cat(sprintf("\nValor esperado bajo aleatoriedad: E[I] = %.4f   |   E[C] = 1\n", -1 / (n - 1)))
+
+write.csv(tabla_ac, file.path(DIR_SALIDA, "tabla_autocorrelacion.csv"), row.names = FALSE)
+
+# ---- 5.3 Diagrama de dispersion de Moran ------------------------------------
+# Eje x: valor estandarizado. Eje y: promedio de sus vecinos (rezago espacial).
+# La pendiente de la recta ES el indice de Moran.
+
+pw_ref <- pesos_espaciales(D, 0.10)
+z_std  <- as.numeric(scale(datos$residual))
+lag_z  <- as.numeric(pw_ref$W %*% z_std)
+I_ref  <- moran(datos$residual, pw_ref$W)
+
+figura("fig09_moran_scatter.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  col_cuad <- ifelse(z_std >= 0 & lag_z >= 0, "#d73027",
+              ifelse(z_std <  0 & lag_z <  0, "#4575b4", "grey65"))
+  plot(z_std, lag_z, pch = 21, bg = col_cuad, cex = 1.4, las = 1,
+       xlab = "Residual estandarizado", ylab = "Promedio de los vecinos (rezago espacial)",
+       main = sprintf("Diagrama de Moran de los residuales (I = %.3f)", I_ref))
+  abline(h = 0, v = 0, col = "grey60", lty = 3)
+  abline(lm(lag_z ~ z_std), col = "black", lwd = 2.5)
+  legend("topleft", bty = "n", cex = 0.75, pch = 21,
+         pt.bg = c("#d73027", "#4575b4", "grey65"),
+         legend = c("Alto rodeado de alto", "Bajo rodeado de bajo", "Discordante"))
+}, ancho = 1800, alto = 1600)
+
+# ---- 5.4 Correlograma: Moran por anillo de distancia ------------------------
+# Muestra hasta donde llega la dependencia espacial. El corte por cero anticipa
+# el rango practico que estimara el semivariograma.
+
+anillos <- seq(0, max(D) * 0.7, length.out = 9)
+correlograma <- do.call(rbind, lapply(seq_len(length(anillos) - 1), function(k) {
+  W <- matrix(0, n, n)
+  W[D > anillos[k] & D <= anillos[k + 1]] <- 1
+  diag(W) <- 0
+  filas <- rowSums(W)
+  if (sum(filas) == 0) return(NULL)
+  W <- sweep(W, 1, ifelse(filas == 0, 1, filas), "/")
+  data.frame(h_medio = mean(anillos[k:(k + 1)]),
+             pares = sum(W > 0),
+             I = moran(datos$residual, W))
+}))
+
+cat("\n--- Correlograma de los residuales ---\n")
+print(format(correlograma, digits = 4))
+
+figura("fig10_correlograma.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plot(correlograma$h_medio, correlograma$I, type = "o", pch = 19, cex = 1.3,
+       col = "#08519c", lwd = 2, las = 1,
+       xlab = "Distancia h (km)", ylab = "Indice de Moran I",
+       main = "Correlograma de los residuales de la tendencia")
+  abline(h = -1 / (n - 1), col = "red", lty = 2, lwd = 2)
+  text(max(correlograma$h_medio) * 0.75, -1 / (n - 1), pos = 3, cex = 0.75,
+       col = "red", labels = "E[I] bajo aleatoriedad")
+  grid(col = "grey85")
+}, ancho = 1900, alto = 1400)
