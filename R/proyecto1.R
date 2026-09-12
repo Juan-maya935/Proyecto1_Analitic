@@ -595,9 +595,9 @@ figura("fig08d_mapa_obs_vs_tendencia.png", {
   par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3.5, 1))
   rango <- range(c(datos$precip, datos$tendencia))
   escala <- function(v) 0.6 + (v - rango[1]) / diff(rango) * 2.4
-  mapa_base(borde, "(A) Precipitacion observada", margen_inf = 0)
+  mapa_base(borde, "(A) Precipitacion observada")
   points(datos$lon, datos$lat, pch = 21, bg = "#3182bd", cex = escala(datos$precip))
-  mapa_base(borde, "(B) Tendencia ajustada por el modelo", margen_inf = 0)
+  mapa_base(borde, "(B) Tendencia ajustada por el modelo")
   points(datos$lon, datos$lat, pch = 21, bg = "#31a354", cex = escala(datos$tendencia))
   par(mfrow = c(1, 1))
 }, ancho = 3000, alto = 1700)
