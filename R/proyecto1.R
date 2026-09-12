@@ -443,3 +443,75 @@ figura("fig06_residuales.png", {
   abline(h = 0, col = "red", lwd = 2, lty = 2)
   par(mfrow = c(1, 1))
 }, ancho = 2800, alto = 1100)
+
+
+# ---- 4.3 Representacion visual de la confusion ------------------------------
+# Cuatro paneles que muestran por que la correlacion simple de la altitud
+# enganya, y cual es su efecto real.
+
+# Bandas de longitud (terciles) para el analisis estratificado
+cortes_x <- quantile(datos$x_km, c(0, 1/3, 2/3, 1))
+datos$banda <- cut(datos$x_km, breaks = cortes_x, include.lowest = TRUE,
+                   labels = c("Oeste (pacifico)", "Centro", "Este (valle)"))
+
+col_banda <- c("#1a9850", "#fdae61", "#d73027")
+pal_lon <- colorRampPalette(c("#1a9850", "#fdae61", "#d73027"))(100)
+idx_lon <- round((datos$x_km - min(datos$x_km)) / diff(range(datos$x_km)) * 99) + 1
+
+cat("\n--- Pendiente precip~altitud DENTRO de cada banda de longitud ---\n")
+for (b in levels(datos$banda)) {
+  sub <- datos[datos$banda == b, ]
+  pend <- coef(lm(precip ~ altitud, data = sub))[2]
+  cat(sprintf("  %-18s n=%2d   pendiente = %+.4f mm/m\n", b, nrow(sub), pend))
+}
+cat(sprintf("  %-18s n=%2d   pendiente = %+.4f mm/m  <- agrupado\n",
+            "TODOS JUNTOS", nrow(datos), coef(lm(precip ~ altitud, data = datos))[2]))
+
+figura("fig07_confusion_altitud.png", {
+  par(mfrow = c(2, 2), mar = c(4.5, 4.5, 3.5, 1))
+
+  # (A) La colinealidad: altitud contra longitud
+  plot(datos$x_km, datos$altitud, pch = 21, bg = pal_lon[idx_lon], cex = 1.3, las = 1,
+       xlab = "Coordenada Este (km)", ylab = "Altitud SRTM (m)",
+       main = sprintf("(A) Altitud y longitud van juntas\nr = %.3f",
+                      cor(datos$x_km, datos$altitud)))
+  abline(lm(altitud ~ x_km, data = datos), col = "black", lwd = 2)
+
+  # (B) La correlacion simple: enganyosa
+  plot(datos$altitud, datos$precip, pch = 21, bg = pal_lon[idx_lon], cex = 1.3, las = 1,
+       xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
+       main = sprintf("(B) Correlacion simple: r = %.3f\n'mas alto = mas seco' (FALSO)",
+                      cor(datos$altitud, datos$precip)))
+  abline(lm(precip ~ altitud, data = datos), col = "red", lwd = 2.5)
+  legend("topright", bty = "n", cex = 0.7, pch = 21, pt.bg = col_banda,
+         legend = c("Oeste", "Centro", "Este"), title = "Longitud")
+
+  # (C) Estratificado: dentro de cada banda la pendiente cambia de signo
+  plot(datos$altitud, datos$precip, type = "n", las = 1,
+       xlab = "Altitud SRTM (m)", ylab = "Precipitacion (mm/semana)",
+       main = "(C) Estratificado por longitud:\nel efecto de la altitud NO es homogeneo")
+  for (k in seq_along(levels(datos$banda))) {
+    sub <- datos[datos$banda == levels(datos$banda)[k], ]
+    points(sub$altitud, sub$precip, pch = 21, bg = col_banda[k], cex = 1.3)
+    if (nrow(sub) > 2) {
+      aj <- lm(precip ~ altitud, data = sub)
+      xs <- range(sub$altitud)
+      lines(xs, predict(aj, data.frame(altitud = xs)), col = col_banda[k], lwd = 2.5)
+    }
+  }
+  legend("topright", bty = "n", cex = 0.7, lwd = 2.5, col = col_banda,
+         legend = levels(datos$banda))
+
+  # (D) Grafico de variable anyadida: el efecto REAL de la altitud
+  res_precip  <- residuals(lm(precip  ~ x_km + y_km, data = datos))
+  res_altitud <- residuals(lm(altitud ~ x_km + y_km, data = datos))
+  pend_parcial <- coef(lm(res_precip ~ res_altitud))[2]
+  plot(res_altitud, res_precip, pch = 21, bg = "#4575b4", cex = 1.3, las = 1,
+       xlab = "Altitud | quitada la posicion (m)",
+       ylab = "Precipitacion | quitada la posicion (mm)",
+       main = sprintf("(D) Efecto parcial de la altitud\npendiente = %+.4f mm/m", pend_parcial))
+  abline(lm(res_precip ~ res_altitud), col = "blue", lwd = 2.5)
+  abline(h = 0, v = 0, col = "grey70", lty = 3)
+
+  par(mfrow = c(1, 1))
+}, ancho = 2600, alto = 2400)
