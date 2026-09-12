@@ -1,0 +1,7 @@
+"tendencia","modelo","RMSE_sin_kriging","RMSE_con_kriging","mejora_pct","MAE","R2_CV","sd_z","kappa"
+"lineal","exponencial",21.32,7.09,66.7,5.29,0.9806,0.69,7680000
+"lineal","esferico",21.32,7.15,66.5,5.3,0.9803,0.73,1130000
+"cuadratica","exponencial",14.02,8.72,37.8,5.54,0.9707,1.01,168000
+"cuadratica","esferico",14.02,8.86,36.8,5.53,0.9697,1.06,10100
+"cuadratica","gaussiano",14.02,23.16,-65.3,15.68,0.7933,18.61,123000
+"lineal","gaussiano",21.32,160.29,-651.9,80.95,-8.8974,339,119000000

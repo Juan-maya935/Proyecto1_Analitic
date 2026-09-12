@@ -913,3 +913,321 @@ figura_variograma("cuadratica", CUTOFF_CORR,
 figura_variograma("cuadratica", CUTOFF_LIBRO,
   sprintf("Tendencia CUADRATICA - cutoff %.0f km (regla del libro)", CUTOFF_LIBRO),
   "fig11c_variograma_cuadratica_libro.png")
+
+
+################################################################################
+# PASO 7. KRIGING
+#
+# Lecture_SpatialStatistics.pdf:
+#   "Kriging is a geostatistical interpolation method that provides the Best
+#    Linear Unbiased Predictor (BLUP) of Z at an unsampled location s0"
+#   ec. (15)  Z_hat(s0) = SUM lambda_i Z(s_i)
+#   ec. (16)  los pesos minimizan la varianza de prediccion
+#             sujeto a SUM lambda_i = 1, resuelto con multiplicador de Lagrange.
+#
+# Se predice el RESIDUO por kriging ordinario y se le suma la tendencia
+# (libro, Definicion 5: Y(s) = mu(s) + Z(s)).
+################################################################################
+
+cat("\n================ PASO 7: KRIGING ================\n")
+
+# ---- 7.1 Funcion de covarianza ----------------------------------------------
+# C(h) = meseta - gamma(h). Asi el efecto pepita entra correcto:
+# C(0) = meseta, y C(0+) = meseta - c0 = c1.
+# (Los scripts de clase usan C(h) = meseta * exp(-h/phi), que solo coincide con
+#  esto para el modelo exponencial SIN pepita.)
+
+CUTOFF <- CUTOFF_CORR   # 50 km, justificado por el correlograma del Paso 5
+
+hacer_C <- function(f) {
+  fn <- MODELOS[[f$modelo]]
+  function(h) unname(f$sill - fn(h, f$c0, f$c1, f$a))
+}
+
+parametros_ajuste <- function(tend, modelo, cutoff = CUTOFF) {
+  sv <- semivariograma_empirico(residuales_tend[[tend]], D, cutoff)
+  aj <- ajustar_modelo(sv, MODELOS[[modelo]])
+  list(tendencia = tend, modelo = modelo, c0 = unname(aj["c0"]),
+       c1 = unname(aj["c1"]), a = unname(aj["a"]),
+       sill = unname(aj["c0"] + aj["c1"]))
+}
+
+# ---- 7.2 Sistema de kriging ordinario sobre los residuos --------------------
+kriging_residuo <- function(s0, coords_obs, resid_obs, Sigma, C_fn) {
+  n_obs <- nrow(coords_obs)
+  d0 <- sqrt((coords_obs[, 1] - s0[1])^2 + (coords_obs[, 2] - s0[2])^2)
+  c0_vec <- C_fn(d0)
+  A <- rbind(cbind(Sigma, rep(1, n_obs)), c(rep(1, n_obs), 0))
+  b <- c(c0_vec, 1)
+  sol <- tryCatch(solve(A, b), error = function(e) NULL)
+  if (is.null(sol)) return(c(pred = NA_real_, var = NA_real_))
+  lambda <- sol[1:n_obs]; mu <- sol[n_obs + 1]
+  c(pred = sum(lambda * resid_obs),
+    var  = max(0, C_fn(0) - sum(lambda * c0_vec) - mu))
+}
+
+# ---- 7.3 Validacion cruzada: 2 tendencias x 3 modelos ----------------------
+# El modelo de covarianza NO se elige por suma de cuadrados sino por desempeno
+# predictivo. El gaussiano ajusta mejor el semivariograma empirico pero produce
+# una matriz de kriging casi singular (autovalor minimo ~1e-5 frente a ~17 del
+# esferico), y con ella los pesos se disparan.
+
+loocv <- function(tend, modelo) {
+  f <- parametros_ajuste(tend, modelo)
+  C_fn <- hacer_C(f)
+  Sigma_full <- matrix(C_fn(as.vector(D)), nrow = n)
+  pred <- numeric(n); vari <- numeric(n)
+  for (i in 1:n) {
+    m_i <- lm(formulas_tendencia[[tend]], data = datos[-i, ])
+    k <- kriging_residuo(coords[i, ], coords[-i, ], residuals(m_i),
+                         Sigma_full[-i, -i], C_fn)
+    pred[i] <- predict(m_i, newdata = datos[i, , drop = FALSE]) + k["pred"]
+    vari[i] <- k["var"]
+  }
+  err <- datos$precip - pred
+  list(ajuste = f, pred = pred, var = vari, err = err,
+       kappa = kappa(rbind(cbind(Sigma_full, 1), c(rep(1, n), 0))),
+       rmse = sqrt(mean(err^2)), mae = mean(abs(err)),
+       r2 = 1 - sum(err^2) / sum((datos$precip - mean(datos$precip))^2),
+       # Si la varianza de kriging esta bien calibrada, sd del error
+       # estandarizado debe rondar 1.
+       sd_z = sd(err / sqrt(vari)))
+}
+
+# Referencia sin kriging: solo la tendencia
+loocv_solo_tendencia <- function(tend) {
+  p <- sapply(1:n, function(i)
+    predict(lm(formulas_tendencia[[tend]], data = datos[-i, ]),
+            newdata = datos[i, , drop = FALSE]))
+  e <- datos$precip - p
+  c(rmse = sqrt(mean(e^2)),
+    r2 = 1 - sum(e^2) / sum((datos$precip - mean(datos$precip))^2))
+}
+
+base_tend <- lapply(names(formulas_tendencia), loocv_solo_tendencia)
+names(base_tend) <- names(formulas_tendencia)
+
+combos <- expand.grid(tendencia = names(formulas_tendencia),
+                      modelo = names(MODELOS), stringsAsFactors = FALSE)
+cv_todos <- lapply(seq_len(nrow(combos)),
+                   function(i) loocv(combos$tendencia[i], combos$modelo[i]))
+names(cv_todos) <- paste(combos$tendencia, combos$modelo, sep = "_")
+
+tabla_cv <- do.call(rbind, lapply(seq_along(cv_todos), function(i) {
+  r <- cv_todos[[i]]; t <- combos$tendencia[i]
+  data.frame(tendencia = t, modelo = combos$modelo[i],
+             RMSE_sin_kriging = round(base_tend[[t]]["rmse"], 2),
+             RMSE_con_kriging = round(r$rmse, 2),
+             mejora_pct = round(100 * (base_tend[[t]]["rmse"] - r$rmse) /
+                                base_tend[[t]]["rmse"], 1),
+             MAE = round(r$mae, 2), R2_CV = round(r$r2, 4),
+             sd_z = round(r$sd_z, 2), kappa = signif(r$kappa, 3),
+             row.names = NULL)
+}))
+tabla_cv <- tabla_cv[order(tabla_cv$RMSE_con_kriging), ]
+
+cat("\n--- Validacion cruzada leave-one-out: 2 tendencias x 3 modelos ---\n")
+print(tabla_cv)
+write.csv(tabla_cv, file.path(DIR_SALIDA, "tabla_validacion_cruzada.csv"), row.names = FALSE)
+
+MEJOR <- names(cv_todos)[which.min(sapply(cv_todos, function(x) x$rmse))]
+cv_mejor <- cv_todos[[MEJOR]]
+TEND_OK <- cv_mejor$ajuste$tendencia
+MOD_OK  <- cv_mejor$ajuste$modelo
+cat(sprintf("\nMejor combinacion: tendencia %s + modelo %s\n", TEND_OK, MOD_OK))
+cat(sprintf("  RMSE %.2f mm | MAE %.2f mm | R2_CV %.4f | sd_z %.2f\n",
+            cv_mejor$rmse, cv_mejor$mae, cv_mejor$r2, cv_mejor$sd_z))
+
+
+# ---- 7.4 Criterio de seleccion: no basta con el RMSE ------------------------
+# Tres filtros, los tres necesarios:
+#   (a) estacionariedad  : meseta ~ varianza de los residuales (libro, Def. 4)
+#   (b) calibracion      : sd del error estandarizado ~ 1, o el mapa de
+#                          incertidumbre no significa nada
+#   (c) estabilidad      : numero de condicion de la matriz de kriging acotado
+# Entre las combinaciones que pasan, se toma la de menor RMSE.
+
+validez <- do.call(rbind, lapply(seq_along(cv_todos), function(i) {
+  r <- cv_todos[[i]]; f <- r$ajuste
+  razon <- f$sill / varianzas[[f$tendencia]]
+  data.frame(tendencia = f$tendencia, modelo = f$modelo,
+             razon_meseta = round(razon, 2),
+             estacionario = abs(razon - 1) <= 0.25,
+             calibrado    = r$sd_z >= 0.80 & r$sd_z <= 1.25,
+             estable      = r$kappa < 1e6,
+             RMSE = round(r$rmse, 2), row.names = NULL)
+}))
+validez$valida <- validez$estacionario & validez$calibrado & validez$estable
+
+cat("\n--- Filtros de validez ---\n")
+print(validez[order(validez$RMSE), ])
+
+candidatas <- which(validez$valida)
+if (length(candidatas) == 0) stop("Ninguna combinacion pasa los tres filtros.")
+idx_ok  <- candidatas[which.min(validez$RMSE[candidatas])]
+cv_ok   <- cv_todos[[idx_ok]]
+TEND_OK <- cv_ok$ajuste$tendencia
+MOD_OK  <- cv_ok$ajuste$modelo
+
+cat(sprintf("\nSELECCION FINAL: tendencia %s + modelo %s\n", TEND_OK, MOD_OK))
+cat(sprintf("  RMSE %.2f mm | MAE %.2f mm | R2_CV %.4f | sd_z %.2f | kappa %.1e\n",
+            cv_ok$rmse, cv_ok$mae, cv_ok$r2, cv_ok$sd_z, cv_ok$kappa))
+cat(sprintf("  pepita %.1f | meseta %.1f | a %.1f km\n",
+            cv_ok$ajuste$c0, cv_ok$ajuste$sill, cv_ok$ajuste$a))
+
+# ---- 7.5 Figuras de validacion ----------------------------------------------
+figura("fig12_validacion_cruzada.png", {
+  par(mfrow = c(1, 3), mar = c(4.5, 4.5, 3.5, 1))
+  lim <- range(c(datos$precip, cv_ok$pred))
+  plot(datos$precip, cv_ok$pred, pch = 21, bg = "#3182bd", cex = 1.3, las = 1,
+       xlim = lim, ylim = lim, xlab = "Observado (mm)", ylab = "Predicho LOOCV (mm)",
+       main = sprintf("(A) Observado vs predicho\nR2 = %.3f", cv_ok$r2))
+  abline(0, 1, col = "red", lwd = 2, lty = 2); grid(col = "grey85")
+  plot(cv_ok$pred, cv_ok$err, pch = 21, bg = "#e6550d", cex = 1.3, las = 1,
+       xlab = "Predicho (mm)", ylab = "Error (obs - pred, mm)",
+       main = sprintf("(B) Residuos de validacion\nRMSE = %.2f mm", cv_ok$rmse))
+  abline(h = 0, col = "red", lwd = 2, lty = 2); grid(col = "grey85")
+  z <- cv_ok$err / sqrt(cv_ok$var)
+  qqnorm(z, pch = 21, bg = "#756bb1", cex = 1.3, las = 1,
+         main = sprintf("(C) Error estandarizado\nsd = %.2f (ideal 1)", cv_ok$sd_z))
+  qqline(z, col = "red", lwd = 2)
+  par(mfrow = c(1, 1))
+}, ancho = 2800, alto = 1100)
+
+# Mapa del error de validacion: donde falla el modelo
+figura("fig13_mapa_error_loocv.png", {
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  tam <- 0.7 + abs(cv_ok$err) / max(abs(cv_ok$err)) * 2.3
+  col <- ifelse(cv_ok$err >= 0, "#d73027", "#4575b4")
+  plot(borde, border = "grey40", las = 1, xlab = "Longitud", ylab = "Latitud",
+       main = sprintf("Error de validacion cruzada (RMSE = %.2f mm)", cv_ok$rmse))
+  points(datos$lon, datos$lat, pch = 21, bg = col, cex = tam)
+  lg <- esquina_leyenda(borde)
+  legend(lg["x"], lg["y"], bty = "o", bg = "white", cex = 0.78, pch = 21, pt.cex = 1.6,
+         pt.bg = c("#d73027", "#4575b4"),
+         legend = c("Subestima (+)", "Sobreestima (-)"))
+}, ancho = 1700, alto = 1900)
+
+
+################################################################################
+# PASO 8. PREDICCION ESPACIAL SOBRE TODO EL DEPARTAMENTO
+################################################################################
+
+cat("\n================ PASO 8: PREDICCION ================\n")
+
+# ---- 8.1 Grilla de prediccion ----------------------------------------------
+celdas <- crds(mask(r_alt, mascara, maskvalues = c(FALSE, NA)), na.rm = TRUE)
+grilla <- data.frame(
+  lon = celdas[, 1], lat = celdas[, 2],
+  altitud = extract(r_alt, celdas)[, 1],
+  observado = extract(precip, celdas)[, 1])
+grilla <- na.omit(grilla)
+# Misma proyeccion que las estaciones: mismos lon0 y lat0
+grilla$x_km <- (grilla$lon - lon0) * 111.320 * cos(lat0 * pi / 180)
+grilla$y_km <- (grilla$lat - lat0) * 110.574
+
+cat(sprintf("Celdas a predecir: %d\n", nrow(grilla)))
+
+# ---- 8.2 Kriging sobre la grilla -------------------------------------------
+f_ok  <- cv_ok$ajuste
+C_ok  <- hacer_C(f_ok)
+mod_ok <- lm(formulas_tendencia[[TEND_OK]], data = datos)
+resid_ok <- residuals(mod_ok)
+Sigma_ok <- matrix(C_ok(as.vector(D)), nrow = n)
+
+grilla$tendencia <- predict(mod_ok, newdata = grilla)
+krg <- t(sapply(seq_len(nrow(grilla)), function(k)
+  kriging_residuo(c(grilla$x_km[k], grilla$y_km[k]), coords, resid_ok, Sigma_ok, C_ok)))
+grilla$residuo   <- krg[, "pred"]
+grilla$prediccion <- grilla$tendencia + grilla$residuo
+grilla$sd_krig   <- sqrt(krg[, "var"])
+
+cat(sprintf("Prediccion: min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$prediccion), mean(grilla$prediccion), max(grilla$prediccion)))
+cat(sprintf("Observado : min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$observado), mean(grilla$observado), max(grilla$observado)))
+cat(sprintf("Incertidumbre (sd de kriging): min %.1f  media %.1f  max %.1f mm\n",
+            min(grilla$sd_krig), mean(grilla$sd_krig), max(grilla$sd_krig)))
+
+# Contraste contra el valor real en las celdas que NO contienen estacion.
+# OJO: spatSample() devuelve puntos aleatorios dentro del poligono, no centros
+# de celda, asi que comparar coordenadas no sirve. Hay que identificar la celda
+# que contiene cada estacion con cellFromXY().
+celda_estacion <- unique(cellFromXY(r_alt, cbind(datos$lon, datos$lat)))
+celda_grilla   <- cellFromXY(r_alt, cbind(grilla$lon, grilla$lat))
+no_muestreadas <- !(celda_grilla %in% celda_estacion)
+err_grilla <- grilla$observado - grilla$prediccion
+
+cat(sprintf("\nEstaciones: %d, repartidas en %d celdas distintas (%d comparten celda)\n",
+            n, length(celda_estacion), n - length(celda_estacion)))
+cat(sprintf("RMSE en las %d celdas CON estacion : %.2f mm\n",
+            sum(!no_muestreadas), sqrt(mean(err_grilla[!no_muestreadas]^2))))
+cat(sprintf("RMSE en las %d celdas SIN estacion : %.2f mm  <- el numero honesto\n",
+            sum(no_muestreadas), sqrt(mean(err_grilla[no_muestreadas]^2))))
+cat(sprintf("R2 en las celdas sin estacion      : %.4f\n",
+            1 - sum(err_grilla[no_muestreadas]^2) /
+                sum((grilla$observado[no_muestreadas] - mean(grilla$observado[no_muestreadas]))^2)))
+
+# ---- 8.3 Rasters de salida --------------------------------------------------
+a_raster <- function(col) {
+  r <- rast(grilla[, c("lon", "lat", col)], type = "xyz", crs = crs(r_alt))
+  mask(r, mascara, maskvalues = c(FALSE, NA))
+}
+r_pred <- a_raster("prediccion"); r_sd <- a_raster("sd_krig")
+r_tend <- a_raster("tendencia");  r_res <- a_raster("residuo")
+r_err  <- a_raster("observado") - r_pred
+
+writeRaster(r_pred, file.path(DIR_SALIDA, "raster_precipitacion_estimada.tif"), overwrite = TRUE)
+writeRaster(r_sd,   file.path(DIR_SALIDA, "raster_incertidumbre.tif"), overwrite = TRUE)
+
+# ---- 8.4 Mapas --------------------------------------------------------------
+mapa_raster <- function(r, titulo, paleta, estaciones = TRUE) {
+  plot(r, col = paleta, las = 1, main = titulo, xlab = "Longitud", ylab = "Latitud")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  if (estaciones) points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.7, lwd = 1.1)
+}
+
+pal_lluvia <- colorRampPalette(c("#fff7ec", "#fdbb84", "#41ab5d", "#238443", "#00441b"))(60)
+pal_incert <- colorRampPalette(c("#ffffcc", "#fd8d3c", "#bd0026"))(60)
+pal_div    <- colorRampPalette(c("#4575b4", "#ffffbf", "#d73027"))(60)
+
+# Mapa principal: prediccion
+figura("fig14_mapa_prediccion.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_pred, "Precipitacion semanal estimada (mm) - semana 44", pal_lluvia)
+}, ancho = 1700, alto = 1900)
+
+# Mapa de incertidumbre
+figura("fig15_mapa_incertidumbre.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_sd, "Incertidumbre: desviacion estandar de kriging (mm)", pal_incert)
+}, ancho = 1700, alto = 1900)
+
+# Descomposicion: tendencia y residuo espacial
+figura("fig16_descomposicion.png", {
+  par(mfrow = c(1, 2), mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_tend, "(A) Componente de tendencia", pal_lluvia, estaciones = FALSE)
+  mapa_raster(r_res, "(B) Componente residual (kriging)", pal_div)
+  par(mfrow = c(1, 1))
+}, ancho = 3000, alto = 1700)
+
+# Observado contra estimado, misma escala
+figura("fig17_observado_vs_estimado.png", {
+  par(mfrow = c(1, 2), mar = c(4, 4, 3.5, 4.5))
+  rng <- range(c(values(precip), values(r_pred)), na.rm = TRUE)
+  plot(precip, col = pal_lluvia, range = rng, las = 1, xlab = "Longitud",
+       ylab = "Latitud", main = "(A) CHIRPS observado")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  plot(r_pred, col = pal_lluvia, range = rng, las = 1, xlab = "Longitud",
+       ylab = "Latitud", main = "(B) Kriging desde 70 estaciones")
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.7, lwd = 1.1)
+  par(mfrow = c(1, 1))
+}, ancho = 3000, alto = 1700)
+
+# Mapa del error de reconstruccion
+figura("fig18_mapa_error.png", {
+  par(mar = c(4, 4, 3.5, 4.5))
+  mapa_raster(r_err, sprintf("Error de reconstruccion: observado - estimado (mm)\nRMSE = %.2f mm",
+                             sqrt(mean(err_grilla[no_muestreadas]^2))), pal_div)
+}, ancho = 1700, alto = 1900)
