@@ -21,3 +21,7 @@ material_clase/
 
 # Material de clase pesado (libros/papers del profesor, repo PUBLICO)
 material_clase/carpeta/Section1_Week_3.zip
+
+# Rscript abre este dispositivo cuando no hay pantalla (el "dibuja en pantalla"
+# del helper figura()). En RStudio no aparece; con Rscript sí. Es basura.
+Rplots.pdf
