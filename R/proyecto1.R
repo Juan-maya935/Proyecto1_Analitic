@@ -25,15 +25,32 @@ DIR_DATOS <- "data/datos_proyecto_1/imagenes_semanales"
 DIR_SALIDA <- "resultados"
 if (!dir.exists(DIR_SALIDA)) dir.create(DIR_SALIDA, recursive = TRUE)
 
-# Reproducibilidad: los .tif no se versionan (son derivados). Si no estan,
-# se extraen del zip original, que si esta en el repo.
-if (!dir.exists(DIR_DATOS)) {
+# Reproducibilidad: los .tif no se versionan (son derivados). Si no estan en la
+# ruta por defecto se intenta, en orden: (1) descomprimir el zip original, que
+# si esta en el repo; (2) buscar los rasters en cualquier subcarpeta del
+# directorio de trabajo, para que el script corra tambien cuando se entrega
+# suelto junto a los datos en otra ubicacion.
+ARCHIVO_ANCLA <- "chirps_climatologia_semanal_valle.tif"
+
+if (!file.exists(file.path(DIR_DATOS, ARCHIVO_ANCLA))) {
   zip_datos <- "data/datos_proyecto_1.zip"
-  if (!file.exists(zip_datos)) stop("No se encuentra ", zip_datos)
-  cat("Descomprimiendo el dataset original...\n")
-  unzip(zip_datos, exdir = "data")
+  if (file.exists(zip_datos)) {
+    cat("Descomprimiendo el dataset original...\n")
+    unzip(zip_datos, exdir = "data")
+  }
 }
-stopifnot(dir.exists(DIR_DATOS))
+
+if (!file.exists(file.path(DIR_DATOS, ARCHIVO_ANCLA))) {
+  encontrados <- list.files(".", pattern = paste0("^", ARCHIVO_ANCLA, "$"),
+                            recursive = TRUE, full.names = TRUE)
+  if (length(encontrados) == 0) {
+    stop("No se encuentran los rasters. Deje la carpeta con los .tif ",
+         "(", ARCHIVO_ANCLA, " y los otros tres) dentro del directorio de ",
+         "trabajo actual: ", normalizePath("."))
+  }
+  DIR_DATOS <- dirname(encontrados[1])
+  cat("Rasters localizados en:", DIR_DATOS, "\n")
+}
 
 
 # ---- Helper de figuras ------------------------------------------------------
@@ -983,8 +1000,9 @@ kriging_residuo <- function(s0, coords_obs, resid_obs, Sigma, C_fn) {
 # ---- 7.3 Validacion cruzada: 2 tendencias x 3 modelos ----------------------
 # El modelo de covarianza NO se elige por suma de cuadrados sino por desempeno
 # predictivo. El gaussiano ajusta mejor el semivariograma empirico pero produce
-# una matriz de kriging casi singular (autovalor minimo ~1e-5 frente a ~17 del
-# esferico), y con ella los pesos se disparan.
+# una matriz de covarianzas casi singular (autovalor minimo 0.0086 frente a 9.13
+# del esferico, mil veces menor), y con ella los pesos se disparan. El bloque
+# 7.3b lo mide.
 
 loocv <- function(tend, modelo) {
   f <- parametros_ajuste(tend, modelo)
@@ -1043,6 +1061,21 @@ tabla_cv <- tabla_cv[order(tabla_cv$RMSE_con_kriging), ]
 cat("\n--- Validacion cruzada leave-one-out: 2 tendencias x 3 modelos ---\n")
 print(tabla_cv)
 write.csv(tabla_cv, file.path(DIR_SALIDA, "tabla_validacion_cruzada.csv"), row.names = FALSE)
+
+# ---- 7.3b Condicionamiento de la matriz de covarianzas ----------------------
+# Por que el gaussiano destroza la prediccion aun ajustando bien el
+# semivariograma: su matriz Sigma queda casi singular. Se reporta el autovalor
+# mas pequeno, que es lo que gobierna la explosion de los pesos.
+tabla_ev <- do.call(rbind, lapply(seq_len(nrow(combos)), function(i) {
+  f <- parametros_ajuste(combos$tendencia[i], combos$modelo[i])
+  S <- matrix(hacer_C(f)(as.vector(D)), nrow = n)
+  ev <- sort(eigen(S, only.values = TRUE)$values)
+  data.frame(tendencia = combos$tendencia[i], modelo = combos$modelo[i],
+             autovalor_min = signif(ev[1], 3), autovalor_max = signif(ev[n], 3),
+             kappa_Sigma = signif(ev[n] / ev[1], 3), row.names = NULL)
+}))
+cat("\n--- Condicionamiento de Sigma (autovalores) ---\n")
+print(tabla_ev[order(tabla_ev$autovalor_min), ])
 
 MEJOR <- names(cv_todos)[which.min(sapply(cv_todos, function(x) x$rmse))]
 cv_mejor <- cv_todos[[MEJOR]]

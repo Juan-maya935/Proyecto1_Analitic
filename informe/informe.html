@@ -227,7 +227,7 @@ Universidad Autónoma de Occidente — Ingeniería de Datos e Inteligencia Artif
 
 <p>La columna "RMSE sin kriging" responde la pregunta del enunciado en términos de predicción: pasar de 14,02 a 8,86 mm es una <b>mejora del 37 %</b> que se obtiene únicamente explotando la correlación espacial del residuo, sin agregar ninguna variable nueva. Con la tendencia lineal la mejora aparente es aún mayor, del 67 %, pero en ese caso el kriging está compensando una tendencia mal especificada, que es un mérito prestado.</p>
 
-<p>La tabla también deja ver dos trampas. La primera es el <b>modelo gaussiano</b>, que ajusta muy bien el semivariograma empírico y sin embargo destroza la predicción: su matriz de kriging queda casi singular (autovalor mínimo del orden de 10⁻⁵ frente a 9,1 del esférico) y los pesos se disparan hasta dar un R² de −8,9. Ajustar mejor el variograma no es lo mismo que predecir mejor. La segunda es que <b>el menor RMSE no es la mejor opción</b>. Por eso la selección se hizo con tres filtros simultáneos, no con uno:</p>
+<p>La tabla también deja ver dos trampas. La primera es el <b>modelo gaussiano</b>, que ajusta muy bien el semivariograma empírico y sin embargo destroza la predicción: su matriz de covarianzas queda casi singular (autovalor mínimo 0,0086 frente a 9,13 del esférico, mil veces menor) y los pesos se disparan hasta dar un R² de −8,9. Ajustar mejor el variograma no es lo mismo que predecir mejor. La segunda es que <b>el menor RMSE no es la mejor opción</b>. Por eso la selección se hizo con tres filtros simultáneos, no con uno:</p>
 
 <ul>
 <li><b>Estacionariedad</b>: la razón meseta/varianza debe estar cerca de 1, según la definición del libro.</li>
