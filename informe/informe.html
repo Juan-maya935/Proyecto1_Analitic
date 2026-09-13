@@ -78,8 +78,41 @@ Universidad Autónoma de Occidente — Ingeniería de Datos e Inteligencia Artif
 
 <p>Se promediaron las 52 semanas de la climatología 2010-2025 y se tomó el máximo: la <b>semana 44</b> (primeros días de noviembre), con 91,9 mm de media, frente a los 28,7 mm de la semana 3, la más seca. Trabajar sobre el máximo tiene sentido práctico, porque es cuando la señal espacial es más fuerte y el contraste entre vertientes es más fácil de ver.</p>
 
+<p><b>Por qué la climatología y no los dieciséis años sueltos.</b> El paquete de datos trae también los archivos anuales 2010-2025 (<span class="mono">chirps_semanal_valle_&lt;año&gt;.tif</span> y sus equivalentes de POWER). Se trabajó sobre la climatología semanal porque lo que pregunta el enunciado es la estructura espacial de la precipitación, no el comportamiento de un año concreto: al promediar los dieciséis años la variabilidad interanual —El Niño y La Niña sobre todo— deja de meterse dentro del residuo, que es justamente la parte que después se modela con el semivariograma. Sobre un año suelto, el residuo mezclaría estructura espacial con anomalía climática y el rango estimado dejaría de ser interpretable. El límite del área tampoco hubo que importarlo aparte: los rásteres vienen ya recortados y enmascarados al polígono GADM del departamento, de modo que las 688 celdas con dato <i>son</i> el departamento, y el borde que aparece en los mapas se reconstruye de esa misma máscara con <span class="mono">as.polygons()</span>.</p>
+
 <figure><img src="../resultados/fig01_ciclo_anual.png" style="width:76%"></figure>
 <p class="cap"><b>Figura 1.</b> Ciclo anual promedio de la precipitación semanal (2010-2025). El régimen es <b>bimodal</b>, con máximos en abril-mayo y en octubre-noviembre: es la firma del doble paso de la Zona de Convergencia Intertropical sobre la latitud del departamento. El mínimo de la semana 3 corresponde al veranillo de enero. La semana elegida tiene más del triple de lluvia que la más seca.</p>
+
+<h3>1.3 Marco teórico: qué se estima y con qué ecuaciones</h3>
+
+<p>El procedimiento es el <b>kriging universal</b> tal como lo plantea el Ejemplo 4 de la práctica de geoestadística: la variable se descompone en una deriva determinística y un residuo con estructura espacial, y cada parte se estima con su propia herramienta.</p>
+
+<p class="ec">Z(s) = m(s) + ε(s),  con  m(s) = β₀ + β₁·x + β₂·y + β₃·altitud (+ β₄·x²)</p>
+
+<p><b>Paso 1 — deriva.</b> Los β se estiman por mínimos cuadrados ordinarios, β̂ = (XᵀX)⁻¹XᵀZ, y el residuo es ε̂ = Z − Xβ̂. Se exige que ε̂ tenga media cero, varianza constante y —para que el kriging sea el predictor lineal óptimo— distribución aproximadamente normal; esto se verifica en la sección 3.2.</p>
+
+<p><b>Paso 2 — ¿hay correlación espacial en el residuo?</b> Es la pregunta del enunciado y se responde con los índices de clase, calculados sobre ε̂ con una matriz de pesos W binaria por umbral de distancia y estandarizada por filas (S₀ = ΣᵢΣⱼ wᵢⱼ):</p>
+
+<p class="ec">I = (n / S₀) · [ ΣᵢΣⱼ wᵢⱼ (εᵢ − ε̄)(εⱼ − ε̄) ] / Σᵢ (εᵢ − ε̄)²   ·   C = ((n−1) / 2S₀) · [ ΣᵢΣⱼ wᵢⱼ (εᵢ − εⱼ)² ] / Σᵢ (εᵢ − ε̄)²</p>
+
+<p>Bajo independencia espacial E[I] = −1/(n−1) y E[C] = 1. La significancia se evalúa por permutación: se re-etiquetan los residuos al azar 999 veces y se compara el valor observado contra esa distribución nula.</p>
+
+<p><b>Paso 3 — cuantificar esa correlación.</b> El semivariograma empírico agrupa los pares de estaciones por distancia; N(h) es el conjunto de pares separados aproximadamente h:</p>
+
+<p class="ec">γ̂(h) = 1 / (2·|N(h)|) · Σ<sub>(i,j) ∈ N(h)</sub> [ ε̂(sᵢ) − ε̂(sⱼ) ]²</p>
+
+<p>A esa nube se le ajusta un modelo teórico —esférico, exponencial o gaussiano, definidos en la sección 5— minimizando la suma de cuadrados con <span class="mono">optim()</span>. Los tres parámetros son la pepita c₀, la meseta parcial c₁ y el rango a.</p>
+
+<p><b>Paso 4 — kriging ordinario del residuo.</b> Con la relación C(h) = C(0) − γ(h) se pasa del semivariograma a la covarianza y se resuelve, para cada punto a predecir s₀, el sistema con multiplicador de Lagrange μ que impone que los pesos sumen uno (condición de insesgadez):</p>
+
+<p class="ec">Σⱼ λⱼ C(sᵢ − sⱼ) + μ = C(sᵢ − s₀),  i = 1,…,n   ·   Σⱼ λⱼ = 1</p>
+<p class="ec">ε̂(s₀) = Σⱼ λⱼ ε̂(sⱼ)   ·   σ²<sub>K</sub>(s₀) = C(0) − Σⱼ λⱼ C(sⱼ − s₀) − μ</p>
+
+<p><b>Paso 5 — predicción.</b> Las dos piezas se vuelven a sumar: Ẑ(s₀) = m̂(s₀) + ε̂(s₀). Sumar la deriva estimada por regresión al kriging ordinario de sus residuos <b>es</b> el kriging universal, de modo que el modelo es multivariado en las covariables y geoestadístico en el residuo al mismo tiempo.</p>
+
+<p><b>Paso 6 — validación.</b> Se deja una estación afuera por vez, se reestiman con las 69 restantes tanto la regresión como el sistema de kriging, y se evalúa el error de predicción con RMSE, MAE y R² de validación. Además se controla la calibración de la incertidumbre con el error estandarizado zᵢ = [Z(sᵢ) − Ẑ₋ᵢ(sᵢ)] / σ<sub>K,−i</sub>(sᵢ), cuya desviación estándar debe rondar 1 si la varianza de kriging es creíble.</p>
+
+<p>Los supuestos que este esquema exige y que se verifican explícitamente más adelante son tres: estacionariedad de segundo orden del residuo (la meseta debe aproximar su varianza, sección 5), normalidad aproximada de ε̂ (sección 3.2) e isotropía, que aquí se asume al trabajar el semivariograma en función de la distancia y no de la dirección.</p>
 
 <h2>2. Análisis exploratorio</h2>
 
