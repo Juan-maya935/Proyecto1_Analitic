@@ -266,7 +266,7 @@ figura("fig01_ciclo_anual.png", {
        las = 1, cex.main = 0.95)
   abline(v = SEMANA, col = "red", lty = 2, lwd = 2)
   text(SEMANA, media_semanal[SEMANA], labels = paste0("  Semana ", SEMANA),
-       pos = 4, col = "red", cex = 0.8)
+       pos = 4, col = "red", cex = 0.72)
   grid(col = "grey85")
 }, ancho = 2000, alto = 1100)
 
@@ -1286,3 +1286,146 @@ figura("fig18_mapa_error.png", {
   mapa_raster(r_err, sprintf("Error de reconstruccion: observado - estimado (mm)\nRMSE = %.2f mm",
                              sqrt(mean(err_grilla[no_muestreadas]^2))), pal_div)
 }, ancho = 1700, alto = 1900)
+
+
+################################################################################
+# PASO 9. MAPA DEL METODO
+#
+# Una sola lamina que recorre el procedimiento completo con los datos reales del
+# proyecto: la descomposicion Z = m + e, el diagnostico del residuo, el modelo
+# de semivariograma y el sistema de kriging que devuelve la prediccion.
+# Sirve de figura del marco teorico en el informe: cada panel lleva la ecuacion
+# que le corresponde, escrita con plotmath, al lado del resultado que produce.
+################################################################################
+
+cat("\n================ PASO 9: MAPA DEL METODO ================\n")
+
+# ---- 9.1 Pesos de kriging para un punto de ejemplo --------------------------
+# Se resuelve el sistema una vez, sobre el centro del area, para poder dibujar
+# de que tamano es el peso lambda que recibe cada estacion.
+
+f_fin    <- cv_ok$ajuste
+C_fin    <- hacer_C(f_fin)
+Sigma_f  <- matrix(C_fin(as.vector(D)), nrow = n)
+s0_demo  <- c(mean(range(datos$x_km)), mean(range(datos$y_km)))
+
+d0_demo  <- sqrt((coords[, 1] - s0_demo[1])^2 + (coords[, 2] - s0_demo[2])^2)
+A_demo   <- rbind(cbind(Sigma_f, rep(1, n)), c(rep(1, n), 0))
+b_demo   <- c(C_fin(d0_demo), 1)
+sol_demo <- solve(A_demo, b_demo)
+lam_demo <- sol_demo[1:n]
+mu_demo  <- sol_demo[n + 1]
+
+cat(sprintf("Punto de ejemplo: peso maximo %.3f | los 5 vecinos mas cercanos suman %.2f\n",
+            max(lam_demo), sum(lam_demo[order(d0_demo)][1:5])))
+
+# ---- 9.2 Semivariograma empirico del modelo final ---------------------------
+sv_fin <- semivariograma_empirico(residuales_tend[[TEND_OK]], D, CUTOFF)
+
+# ---- 9.3 La lamina ----------------------------------------------------------
+# Cada panel lleva arriba la ecuacion del paso, escrita con plotmath. Las
+# formulas van en una sola linea (sin fracciones apiladas) para que no se monten
+# sobre el titulo del panel.
+eq <- function(expr, linea = 0.55, cex = 0.82) {
+  mtext(expr, side = 3, line = linea, cex = cex, col = "#08306b")
+}
+
+figura("fig19_mapa_metodo.png", {
+  par(mfrow = c(3, 2), mgp = c(2.1, 0.65, 0), cex.main = 1.05,
+      cex.axis = 0.95, cex.lab = 0.98)
+  MAR_MAPA <- c(3.2, 3.6, 5.6, 4.4)   # terra::plot ignora par(mar): va como argumento
+
+  # (1) El dato -------------------------------------------------------------
+  plot(precip, col = pal_lluvia, las = 1, xlab = "Longitud", ylab = "Latitud",
+       main = "", mar = MAR_MAPA)
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  points(datos$lon, datos$lat, pch = 3, cex = 0.55, lwd = 1)
+  title(main = "(1) El dato: lluvia de la semana 44", line = 2.9)
+  eq(expression(Z(s) == m(s) + epsilon(s)), linea = 1.55)
+  eq(expression("lo observado = deriva + residuo"), linea = 0.4, cex = 0.72)
+
+  # (2) La deriva -----------------------------------------------------------
+  plot(r_tend, col = pal_lluvia, las = 1, xlab = "Longitud", ylab = "Latitud",
+       main = "", mar = MAR_MAPA)
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  title(main = "(2) Deriva m(s): regresion multiple", line = 2.9)
+  eq(expression(hat(m)(s) == beta[0] + beta[1] * x + beta[2] * y +
+                  beta[3] * alt + beta[4] * x^2), linea = 1.55)
+  eq(expression(hat(beta) == (X^T * X)^-1 * X^T * Z), linea = 0.4, cex = 0.72)
+
+  # (3) El residuo ----------------------------------------------------------
+  plot(r_res, col = pal_div, las = 1, xlab = "Longitud", ylab = "Latitud",
+       main = "", mar = MAR_MAPA)
+  plot(borde, add = TRUE, border = "black", lwd = 1.1)
+  points(datos$lon, datos$lat, pch = 3, col = "black", cex = 0.55, lwd = 1)
+  title(main = "(3) Residuo: lo que la regresion deja", line = 2.9)
+  eq(expression(hat(epsilon) == Z - X * hat(beta)), linea = 1.55)
+  eq(expression("manchas, no ruido: correlacion espacial"),
+     linea = 0.4, cex = 0.72)
+
+  # (4) El residuo NO es ruido ----------------------------------------------
+  pw_demo <- pesos_espaciales(D, 0.10)
+  z_std   <- scale(datos$residual)[, 1]
+  lag_std <- as.vector(pw_demo$W %*% z_std)
+  I_demo  <- moran(datos$residual, pw_demo$W)
+  par(mar = c(3.8, 4.0, 5.6, 1.6))
+  plot(z_std, lag_std, pch = 21, bg = "#3182bd", cex = 1.15, las = 1,
+       xlab = "Residual estandarizado", ylab = "Promedio de los vecinos",
+       main = "")
+  abline(lm(lag_std ~ z_std), col = "#d73027", lwd = 2.2)
+  abline(h = 0, v = 0, col = "grey70", lty = 3)
+  title(main = "(4) Medir esa estructura: indice de Moran", line = 2.9)
+  eq(expression(I == (n / S[0]) %.% sum(sum(w[ij] * epsilon[i] * epsilon[j])) /
+                  sum(epsilon[i]^2)), linea = 1.55)
+  eq(expression("la pendiente de la recta es I"), linea = 0.4, cex = 0.72)
+  legend("topleft", bty = "n", cex = 0.74, text.col = "#08306b",
+         y.intersp = 1.25,
+         legend = c(bquote(I == .(sprintf("%.3f", I_demo))),
+                    bquote(E * "[" * I * "]" == .(sprintf("%.3f", -1 / (n - 1)))),
+                    "p = 0,001 (999 permutaciones)"))
+
+  # (5) Cuanta estructura y hasta donde -------------------------------------
+  x_max  <- max(CUTOFF, f_fin$a) * 1.04
+  h_fino <- seq(0, x_max, length.out = 300)
+  plot(sv_fin$h, sv_fin$gamma, pch = 21, bg = "#31a354", cex = 1.3, las = 1,
+       xlab = "Distancia h (km)", ylab = expression(gamma(h)),
+       xlim = c(0, x_max), ylim = c(0, max(sv_fin$gamma) * 1.25), main = "")
+  lines(h_fino, MODELOS[[MOD_OK]](h_fino, f_fin$c0, f_fin$c1, f_fin$a),
+        col = "#d73027", lwd = 2.4)
+  abline(h = f_fin$sill, col = "grey45", lty = 2)
+  segments(f_fin$a, 0, f_fin$a, f_fin$sill, col = "grey45", lty = 3)
+  text(f_fin$a, max(sv_fin$gamma) * 0.20, sprintf("rango a = %.0f km ", f_fin$a),
+       adj = c(1, 0.5), cex = 0.78, col = "grey25")
+  text(x_max * 0.45, f_fin$sill, sprintf("meseta = %.0f", f_fin$sill),
+       adj = c(0.5, -0.6), cex = 0.78, col = "grey25")
+  title(main = "(5) Cuanta y hasta donde: semivariograma", line = 2.9)
+  eq(expression(hat(gamma)(h) == (1 / (2 * group("|", N(h), "|"))) %.%
+                  sum((hat(epsilon)(s[i]) - hat(epsilon)(s[j]))^2)), linea = 1.55)
+  eq(expression("puntos: empirico | linea: modelo ajustado"),
+     linea = 0.4, cex = 0.72)
+
+  # (6) El sistema de kriging y la prediccion --------------------------------
+  cex_w <- 0.6 + 12 * abs(lam_demo)
+  plot(datos$x_km, datos$y_km, pch = 21, bg = "#9ecae1", col = "grey30",
+       cex = cex_w, las = 1, xlab = "x (km)", ylab = "y (km)", main = "",
+       ylim = range(datos$y_km) + c(-6, 26))
+  cercanas <- order(d0_demo)[1:6]
+  segments(s0_demo[1], s0_demo[2], datos$x_km[cercanas], datos$y_km[cercanas],
+           col = "grey55", lty = 2)
+  points(s0_demo[1], s0_demo[2], pch = 4, col = "#d73027", cex = 2.2, lwd = 3)
+  text(s0_demo[1], s0_demo[2], expression(s[0]), pos = 3, offset = 0.9,
+       col = "#d73027", cex = 1.05)
+  title(main = "(6) Kriging: pesos que suman uno", line = 2.9)
+  eq(expression(sum(lambda[j] * C(s[i] - s[j])) + mu == C(s[i] - s[0]) *
+                  "," ~~ sum(lambda[j]) == 1), linea = 1.55)
+  eq(expression(hat(Z)(s[0]) == hat(m)(s[0]) + sum(lambda[j] * hat(epsilon)(s[j])) ~~ "(kriging universal)"), linea = 0.4, cex = 0.72)
+  legend("topright", bty = "n", cex = 0.74, text.col = "#08306b",
+         y.intersp = 1.3, inset = c(0, 0.01),
+         legend = c(expression(sigma[K]^2 == C(0) - sum(lambda[j] *
+                                                          C(s[j] - s[0])) - mu),
+                    bquote(lambda[max] == .(sprintf("%.2f", max(lam_demo))))))
+  legend("bottomleft", bty = "n", cex = 0.7, text.col = "grey25",
+         legend = "el tamano del punto es su peso lambda")
+
+  par(mfrow = c(1, 1))
+}, ancho = 2500, alto = 2600, res = 300)

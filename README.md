@@ -174,7 +174,7 @@ informe/generar_pdf.sh     # reimprime "Proyecto 1 AnalíticaDeDatos.pdf"
 
 El documento **no** está hecho en R Markdown, que el enunciado prohíbe: es HTML
 con reglas `@page` de CSS, impreso por el motor del navegador. Una sola columna,
-A4, 9 páginas de las 10 permitidas.
+A4, 10 páginas de las 10 permitidas.
 
 **Regla:** `docs/` y `data/` no se tocan — son los originales tal como los entregó el profesor. Todo lo que produzcamos vive en `R/` y `resultados/`.
 
@@ -188,7 +188,7 @@ siguen en el historial de git (`git log --all -- Proyecto_1_AnaliticaDeDatos.R`)
 
 ## 6. Entregables
 
-- [x] `Proyecto 1 AnalíticaDeDatos.pdf` — **9 páginas**, una columna, listo en la raíz
+- [x] `Proyecto 1 AnalíticaDeDatos.pdf` — **10 páginas**, una columna, listo en la raíz
 - [x] `proyecto1.R` — script único y reproducible (`R/proyecto1.R`), verificado desde un clon limpio
 - [x] Todos los integrantes listados en el documento
 - [ ] *(solo si se usó IA)* `prompts_IA.docx` — prompts y herramienta empleada
