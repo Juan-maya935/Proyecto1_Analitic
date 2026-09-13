@@ -149,6 +149,7 @@ Los `.tif` descomprimidos están en `.gitignore`: **no se versionan**, se regene
 .
 ├── README.md                                    # este archivo
 ├── Cuaderno_Proyecto1.ipynb                     # bitácora: qué se hizo y por qué
+├── CRITERIO_METODOLOGICO.md                     # qué cuenta como "visto en clase"
 ├── Proyecto 1 AnalíticaDeDatos.pdf              # ← entregable 1: el documento
 ├── .gitignore
 ├── docs/
@@ -160,7 +161,8 @@ Los `.tif` descomprimidos están en `.gitignore`: **no se versionan**, se regene
 ├── informe/
 │   ├── informe.html                             # fuente del PDF
 │   └── generar_pdf.sh                           # lo imprime a PDF
-└── resultados/                                  # figuras y tablas generadas por el script
+├── resultados/                                  # figuras y tablas generadas por el script
+└── material_clase/                              # scripts del profesor (referencia, no entregable)
 ```
 
 **Regenerar el PDF** después de tocar el texto o las figuras:
@@ -176,6 +178,12 @@ A4, 9 páginas de las 10 permitidas.
 
 **Regla:** `docs/` y `data/` no se tocan — son los originales tal como los entregó el profesor. Todo lo que produzcamos vive en `R/` y `resultados/`.
 
+**Un solo pipeline.** El repo tuvo dos versiones paralelas del análisis conviviendo tras
+el merge del PR #3, con figuras y tablas duplicadas en `figuras/` y `resultados/`. El
+13-sep-2026 se consolidó en uno: `R/proyecto1.R` produce todo lo que hay en
+`resultados/`, y el enunciado exige **un único archivo de R**. Las versiones anteriores
+siguen en el historial de git (`git log --all -- Proyecto_1_AnaliticaDeDatos.R`).
+
 ---
 
 ## 6. Entregables
@@ -185,7 +193,7 @@ A4, 9 páginas de las 10 permitidas.
 - [x] Todos los integrantes listados en el documento
 - [ ] *(solo si se usó IA)* `prompts_IA.docx` — prompts y herramienta empleada
 - [ ] Correos institucionales en la tabla de integrantes (sección 1)
-- [ ] Resolver con el grupo qué versión de `R/proyecto1.R` queda en `main`
+- [x] Resuelto: `R/proyecto1.R` es el pipeline único del repo (13-sep-2026)
 - [ ] Subido a Moodle antes del **13-sep-2026 23:59**
 
 ---
