@@ -22,7 +22,7 @@ Profesor: **Johann A. Ospina** — jaospina@uao.edu.co
 
 | Nombre completo | Código | Correo institucional |
 |---|---|---|
-| César Armando Reyes Oliveros | 2236379 | |
+| César Armando Reyes Oliveros | 2236379 | cesar_armando.reyes@uao.edu.co |
 | Yesenia Díaz | 2231783 | |
 | Juan Pablo Maya | 2236377 | |
 
