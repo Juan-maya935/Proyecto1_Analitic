@@ -191,8 +191,8 @@ siguen en el historial de git (`git log --all -- Proyecto_1_AnaliticaDeDatos.R`)
 - [x] `Proyecto 1 AnalíticaDeDatos.pdf` — **10 páginas**, una columna, listo en la raíz
 - [x] `proyecto1.R` — script único y reproducible (`R/proyecto1.R`), verificado desde un clon limpio
 - [x] Todos los integrantes listados en el documento
-- [ ] *(solo si se usó IA)* `prompts_IA.docx` — prompts y herramienta empleada
-- [ ] Correos institucionales en la tabla de integrantes (sección 1)
+- [x] `Prompts IA - Proyecto 1 AnalíticaDeDatos.docx` — prompts y herramienta (Claude Opus 5 vía Claude Code)
+- [x] Correos y códigos de los tres integrantes en la portada del PDF y en el .docx
 - [x] Resuelto: `R/proyecto1.R` es el pipeline único del repo (13-sep-2026)
 - [ ] Subido a Moodle antes del **13-sep-2026 23:59**
 
