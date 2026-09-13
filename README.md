@@ -184,6 +184,12 @@ el merge del PR #3, con figuras y tablas duplicadas en `figuras/` y `resultados/
 `resultados/`, y el enunciado exige **un único archivo de R**. Las versiones anteriores
 siguen en el historial de git (`git log --all -- Proyecto_1_AnaliticaDeDatos.R`).
 
+La carpeta `prueba_con_FMA/` (pipeline paralelo con AFM, 658 líneas) **se retiró de
+`main` el 13-sep-2026** por la misma razón: el enunciado pide *un único archivo de R* y
+tener dos en el repo confunde a quien califica. No se perdió — sigue en el historial
+(commit `860f4e6`) y en la rama local `backup/prueba-con-FMA-maya`; se recupera con
+`git checkout 860f4e6 -- prueba_con_FMA/`.
+
 ---
 
 ## 6. Entregables
