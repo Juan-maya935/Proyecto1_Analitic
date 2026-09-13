@@ -1,0 +1,3 @@
+"Metodologia","Dimensiones_Tendencia","R2_Tendencia","Moran_I_Residual","Sill_Variograma","Rango_Practico_km","RMSE_LOOCV_mm","MAE_LOOCV_mm","R2_Validacion_LOOCV"
+"Modelo 1: Regresion Multivariada Directa + Kriging","5 covariables crudas (Alt, Temp, Rad, X, Y)",0.774911209523179,0.654633192369161,395.503288888476,70.2249300828319,9.6279321698303,6.31492260800819,0.952742335766017
+"Modelo 2: Factores Sinteticos AFM (FMA) + Kriging","2 dimensiones globales AFM",0.690601190490005,0.597664815509714,530.289224437472,69.0587425727535,9.38803852544265,6.55726129807967,0.955067980914925
