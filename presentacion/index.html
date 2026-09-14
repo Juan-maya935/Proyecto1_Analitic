@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lluvia y Kriging en el Valle</title>
+<style>
+@font-face{font-family:"Archivo";font-style:normal;font-weight:300 900;font-stretch:62% 125%;src:url(fonts/archivo.woff2) format("woff2");font-display:swap}
+@font-face{font-family:"Source Serif 4";font-style:normal;font-weight:300 700;src:url(fonts/sourceserif.woff2) format("woff2");font-display:swap}
+@font-face{font-family:"Source Serif 4";font-style:italic;font-weight:300 700;src:url(fonts/sourceserif-italic.woff2) format("woff2");font-display:swap}
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:400 700;src:url(fonts/jetbrains.woff2) format("woff2");font-display:swap}
+:root{
+  --u: min(1vw, 1.7778vh);
+  --bg:#EEF2EA; --paper:#F7F9F4; --ink:#0F2419; --ink2:#34483C; --muted:#5F7367; --rule:#CBD6CC;
+  --lluvia:#1B7A44; --lluvia-2:#2FA05C; --lluvia-soft:#D4EBDA;
+  --seco:#D2661F; --seco-soft:#FBE3CF;
+  --rojo:#C8382B; --rojo-soft:#F9D9D3; --azul:#2B67B4; --azul-soft:#D6E3F6;
+  --dark:#0B2419; --dark-2:#123526; --dark-ink:#F1EFE6; --dark-muted:#8FA697; --dark-acc:#8FE0A4; --dark-sec:#F2A46A;
+  --display:"Archivo","Arial Narrow",Arial,sans-serif;
+  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono","Fira Mono",ui-monospace,Menlo,monospace;
+  color-scheme: light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif)}
+body{scroll-snap-type:y mandatory;overflow-y:auto;height:100vh;padding-inline:0}
+.slide{scroll-snap-align:start;width:100vw;height:100vh;display:grid;place-items:center;position:relative;background:var(--bg)}
+.frame{width:calc(var(--u)*100);height:calc(var(--u)*56.25);padding:calc(var(--u)*3.6) calc(var(--u)*5) calc(var(--u)*3.4) calc(var(--u)*6.2);display:grid;grid-template-rows:auto minmax(0,1fr);gap:calc(var(--u)*1.5);position:relative;overflow:hidden;background:var(--bg)}
+/* rail + ghost numeral */
+.frame::before{content:"";position:absolute;left:calc(var(--u)*3.2);top:calc(var(--u)*3.6);bottom:calc(var(--u)*3.4);width:calc(var(--u)*.45);background:var(--acc,var(--lluvia));border-radius:2px}
+.ghost{position:absolute;right:calc(var(--u)*3.2);bottom:calc(var(--u)*-2.2);font-family:var(--display);font-stretch:70%;font-weight:900;font-size:calc(var(--u)*22);line-height:1;letter-spacing:-.05em;color:var(--acc,var(--lluvia));opacity:.07;pointer-events:none;user-select:none}
+.eyebrow{font-family:var(--mono);font-size:calc(var(--u)*1.05);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:flex;gap:calc(var(--u)*1.2);align-items:center}
+.eyebrow b{color:var(--acc,var(--lluvia));font-weight:700;display:flex;align-items:center;gap:.5em}
+.eyebrow b::before{content:"";width:.7em;height:.7em;border-radius:50%;background:var(--acc,var(--lluvia))}
+.eyebrow .sep{opacity:.5}
+h1,h2{font-family:var(--display);font-stretch:84%;font-weight:750;line-height:1.02;letter-spacing:-.018em;margin:0;text-wrap:balance}
+h2{font-size:calc(var(--u)*3.7);max-width:88%}
+h2 em{font-style:normal;color:var(--lluvia)}
+h2 .s{color:var(--seco)}
+h2 .b{color:var(--azul)}
+h2 .r{color:var(--rojo)}
+.head{display:grid;gap:calc(var(--u)*.8)}
+.body{min-height:0;display:grid;gap:calc(var(--u)*2.6);grid-template-rows:minmax(0,1fr);align-content:stretch;position:relative;z-index:1}
+.cols-75{grid-template-columns:7fr 5fr}
+.cols-57{grid-template-columns:5fr 7fr}
+.cols-66{grid-template-columns:1fr 1fr}
+.cols-84{grid-template-columns:8fr 4fr}
+/* figures: blended onto paper, no white boxes */
+.fig{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;height:100%;margin:0;gap:calc(var(--u)*.5)}
+.fig img{width:100%;height:100%;object-fit:contain;display:block;min-height:0;mix-blend-mode:multiply}
+.fig figcaption{font-family:var(--mono);font-size:calc(var(--u)*.95);color:var(--muted);text-align:left;border-top:1px solid var(--rule);padding-top:calc(var(--u)*.5);display:flex;gap:.8em}
+.fig figcaption b{color:var(--acc,var(--lluvia));font-weight:700;white-space:nowrap}
+.text{font-size:calc(var(--u)*1.55);line-height:1.42;color:var(--ink2);display:grid;gap:calc(var(--u)*1.2);align-content:start;max-width:62ch}
+.text p{margin:0}
+.text strong{color:var(--ink);font-weight:600}
+.text .hl{background:linear-gradient(transparent 55%,var(--lluvia-soft) 55%);color:var(--ink);font-weight:600;padding:0 .15em}
+.text .hl.s{background:linear-gradient(transparent 55%,var(--seco-soft) 55%)}
+.text .hl.b{background:linear-gradient(transparent 55%,var(--azul-soft) 55%)}
+.text .hl.r{background:linear-gradient(transparent 55%,var(--rojo-soft) 55%)}
+.claim{font-family:var(--display);font-stretch:90%;font-weight:600;font-size:calc(var(--u)*2.05);line-height:1.18;color:var(--ink);letter-spacing:-.01em}
+.text ul{margin:0;padding-left:0;list-style:none;display:grid;gap:calc(var(--u)*.7)}
+.text li{padding-left:calc(var(--u)*1.7);position:relative}
+.text li::before{content:"";position:absolute;left:0;top:.55em;width:calc(var(--u)*.9);height:calc(var(--u)*.35);background:var(--acc,var(--lluvia));border-radius:2px}
+.big{font-family:var(--display);font-stretch:70%;font-weight:850;font-size:calc(var(--u)*7.2);line-height:.95;letter-spacing:-.035em;color:var(--lluvia);font-variant-numeric:tabular-nums}
+.big small{display:block;font-family:var(--mono);font-stretch:normal;font-weight:400;font-size:calc(var(--u)*1.05);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:calc(var(--u)*.6)}
+.big.seco{color:var(--seco)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:calc(var(--u)*1.2);align-content:start}
+.stat{background:var(--paper);border-radius:calc(var(--u)*.6);padding:calc(var(--u)*1) calc(var(--u)*1.2);border-left:calc(var(--u)*.4) solid var(--lluvia)}
+.stat .n{font-family:var(--display);font-stretch:72%;font-weight:850;font-size:calc(var(--u)*4.2);line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--lluvia)}
+.stat .l{font-family:var(--mono);font-size:calc(var(--u)*.9);color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-top:calc(var(--u)*.5)}
+.stat.seco{border-color:var(--seco)}.stat.seco .n{color:var(--seco)}
+.stat.azul{border-color:var(--azul)}.stat.azul .n{color:var(--azul)}
+.stat.rojo{border-color:var(--rojo)}.stat.rojo .n{color:var(--rojo)}
+.stat.ink .n{color:var(--ink)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:calc(var(--u)*1.3);font-variant-numeric:tabular-nums;line-height:1.3;background:var(--paper);border-radius:calc(var(--u)*.6);overflow:hidden}
+th,td{padding:calc(var(--u)*.6) calc(var(--u)*.8);text-align:left;border-bottom:1px solid var(--rule);vertical-align:middle}
+th{font-family:var(--mono);font-weight:700;font-size:calc(var(--u)*.9);letter-spacing:.06em;text-transform:uppercase;color:var(--dark-ink);background:var(--dark);border-bottom:0}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-family:var(--mono);font-size:calc(var(--u)*1.2);white-space:nowrap}
+tr.win td{background:var(--lluvia-soft);color:var(--ink);font-weight:600}
+tr.win td:first-child{box-shadow:inset calc(var(--u)*.4) 0 0 var(--lluvia)}
+tr.bad td{color:var(--muted)}
+.tag{display:inline-block;font-family:var(--mono);font-size:calc(var(--u)*.88);padding:.2em .6em;border-radius:1em;letter-spacing:.04em;font-weight:600}
+.tag.ok{background:var(--lluvia-soft);color:var(--lluvia)}
+.tag.no{background:var(--seco-soft);color:var(--seco)}
+.tag.r{background:var(--rojo-soft);color:var(--rojo)}
+.tag.b{background:var(--azul-soft);color:var(--azul)}
+.formula{font-family:var(--mono);font-size:calc(var(--u)*1.35);background:var(--dark);color:var(--dark-ink);padding:calc(var(--u)*1) calc(var(--u)*1.3);line-height:1.6;border-radius:calc(var(--u)*.6)}
+.formula i{font-style:normal;color:var(--dark-acc)}
+.tnote{font-family:var(--mono);font-size:calc(var(--u)*.92);color:var(--muted);margin:calc(var(--u)*.8) 0 0;line-height:1.45}
+.foot{position:absolute;left:calc(var(--u)*6.2);right:calc(var(--u)*5);bottom:calc(var(--u)*1.4);display:flex;justify-content:space-between;font-family:var(--mono);font-size:calc(var(--u)*.88);color:var(--muted);letter-spacing:.06em;z-index:2}
+.foot .n{font-variant-numeric:tabular-nums}
+/* steps */
+.steps{display:grid;gap:calc(var(--u)*1.2);font-size:calc(var(--u)*1.2);align-content:start}
+.step{display:grid;grid-template-columns:auto 1fr;gap:calc(var(--u)*1);align-items:start;line-height:1.35;color:var(--ink2)}
+.step .k{font-family:var(--display);font-stretch:72%;font-weight:850;font-size:calc(var(--u)*2.6);line-height:1;color:var(--lluvia);width:calc(var(--u)*2.4);text-align:right;margin-top:-.05em}
+.step b{display:block;font-family:var(--display);font-stretch:88%;font-weight:700;font-size:1.22em;color:var(--ink);margin-bottom:.15em}
+.step code{font-family:var(--mono);font-size:.9em;color:var(--ink)}
+/* cards */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:calc(var(--u)*1.8)}
+.card{background:var(--dark-2);border-radius:calc(var(--u)*.8);padding:calc(var(--u)*1.8) calc(var(--u)*1.9);display:grid;gap:calc(var(--u)*.8);align-content:start;color:var(--dark-ink)}
+.card .num{font-family:var(--display);font-stretch:70%;font-weight:900;font-size:calc(var(--u)*4.6);line-height:1;letter-spacing:-.03em;color:var(--dark-acc)}
+.card .num.s{color:var(--dark-sec)}
+.card h3{margin:0;font-family:var(--display);font-stretch:88%;font-weight:700;font-size:calc(var(--u)*1.75);line-height:1.15;text-wrap:balance}
+.card p{margin:0;font-size:calc(var(--u)*1.28);line-height:1.42;color:#C9D4CB}
+.limits{display:grid;align-content:center;grid-template-columns:1fr 1fr;gap:calc(var(--u)*1.6) calc(var(--u)*3);font-size:calc(var(--u)*1.4);line-height:1.42;color:var(--ink2)}
+.limits div{background:var(--paper);border-radius:calc(var(--u)*.6);padding:calc(var(--u)*1.2) calc(var(--u)*1.4);border-left:calc(var(--u)*.4) solid var(--seco)}
+.limits b{color:var(--ink);font-weight:600;display:block;font-family:var(--display);font-stretch:90%;font-size:1.12em;margin-bottom:.2em}
+/* DARK slides: cover, dividers, conclusions */
+.dark{background:var(--dark);color:var(--dark-ink)}
+.dark.frame::before{display:none}
+.dark canvas.topo{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.dark .eyebrow{color:var(--dark-muted)}.dark .eyebrow b{color:var(--dark-acc)}.dark .eyebrow b::before{background:var(--dark-acc)}
+.dark h2 em{color:var(--dark-acc)}.dark h2 .s{color:var(--dark-sec)}
+.dark .foot{color:var(--dark-muted)}
+.dark .stat{background:rgba(255,255,255,.06);border-color:var(--dark-acc)}
+.dark .stat .n{color:var(--dark-acc)}.dark .stat.seco{border-color:var(--dark-sec)}.dark .stat.seco .n{color:var(--dark-sec)}
+.dark .stat .l{color:var(--dark-muted)}
+.dark .stat.azul{border-color:#7FB3F0}.dark .stat.azul .n{color:#7FB3F0}
+.cover{grid-template-rows:1fr auto;padding-right:calc(var(--u)*47.5)}
+.cover h1{font-size:calc(var(--u)*5.3);color:var(--dark-ink)}
+.cover h1 em{font-style:normal;color:var(--dark-acc)}
+.cover .sub{font-size:calc(var(--u)*1.55);color:#C9D4CB;margin-top:calc(var(--u)*1.4);line-height:1.45;max-width:46ch}
+.cover .meta{display:grid;grid-template-columns:1.1fr 1.2fr 1fr;gap:calc(var(--u)*2);font-family:var(--mono);font-size:calc(var(--u)*1);color:var(--dark-muted);line-height:1.6}
+.cover .meta b{display:block;color:var(--dark-acc);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:calc(var(--u)*.85);margin-bottom:.4em}
+.cover .map{position:absolute;right:calc(var(--u)*3);top:calc(var(--u)*3);width:calc(var(--u)*42);height:calc(var(--u)*50);border-radius:calc(var(--u)*1);overflow:hidden;background:#F7F9F4;box-shadow:0 30px 60px rgba(0,0,0,.45)}
+.cover .map img{position:absolute;width:126%;height:auto;left:-14%;top:-10%}
+.cover .map .lab{position:absolute;font-family:var(--mono);font-size:calc(var(--u)*.95);color:var(--ink);line-height:1.5;text-align:right;right:calc(var(--u)*1.2)}
+.cover .map .lab .w{font-family:var(--display);font-stretch:70%;font-weight:900;font-size:calc(var(--u)*4.2);line-height:1;display:block;letter-spacing:-.03em}
+.cover .map .lab.a{top:calc(var(--u)*1.2);color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.55);left:calc(var(--u)*1.4);right:auto;text-align:left;background:rgba(11,36,25,.55);padding:.4em .7em;border-radius:.5em;backdrop-filter:blur(2px)}
+.cover .map .lab.b{bottom:calc(var(--u)*1.4)}
+.divider{grid-template-rows:1fr auto;align-items:end}
+.divider .roman{font-family:var(--serif);font-style:italic;font-weight:300;font-size:calc(var(--u)*34);line-height:.8;letter-spacing:-.04em;color:var(--dark-acc);opacity:.22;position:absolute;right:calc(var(--u)*4);top:calc(var(--u)*2);pointer-events:none}
+.divider h2{font-size:calc(var(--u)*5.4);max-width:72%;color:var(--dark-ink)}
+.divider .lead{font-size:calc(var(--u)*1.75);color:#C9D4CB;max-width:52ch;line-height:1.45;margin-top:calc(var(--u)*1.4)}
+.divider .stats{margin-top:calc(var(--u)*2.4);grid-template-columns:repeat(3,auto);justify-content:start;gap:calc(var(--u)*1.6)}
+.divider .stat{padding-right:calc(var(--u)*2.4)}
+.nav{position:fixed;right:calc(var(--u)*1.2);bottom:calc(var(--u)*1.2);font-family:var(--mono);font-size:calc(var(--u)*.9);color:var(--dark-ink);background:var(--dark);padding:.35em .8em;border-radius:1em;opacity:.85;z-index:9}
+@media (max-width:700px){
+  body{scroll-snap-type:none;height:auto}
+  .slide{height:auto;width:auto;padding-block:20px}
+  .frame{width:100%;height:auto;padding:20px 16px 20px 28px}
+  :root{--u:3.4px}
+  .body[class*=cols],.body[style*="grid-template-columns"]{grid-template-columns:1fr !important}
+  .stats,.steps,.three,.limits{grid-template-columns:1fr !important}
+  .cover{padding-right:16px}.cover .map{position:relative;width:100%;height:auto;aspect-ratio:1;right:auto;top:auto;margin-top:16px}
+  h2{max-width:100%}.divider h2{max-width:100%}.divider .roman{font-size:120px}
+  .foot{position:static;margin-top:12px}.nav{display:none}.ghost{display:none}
+}
+@media print{
+  @page{size:1280px 720px;margin:0}
+  :root{--u:12.8px}
+  html,body{height:auto;overflow:visible;scroll-snap-type:none}
+  .slide{width:1280px;height:720px;page-break-after:always;break-after:page}
+  .nav{display:none}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+</head><body>
+
+<!-- PORTADA -->
+<section class="slide"><div class="frame dark cover">
+  <canvas class="topo"></canvas>
+  <div style="position:relative;z-index:1">
+    <div class="eyebrow"><b>Proyecto 1</b><span class="sep">·</span><span>Analítica de Datos · UAO 2026-2S</span></div>
+    <h1 style="margin-top:calc(var(--u)*1.8)">Modelar la lluvia semanal del Valle del Cauca y medir <em>cuánto aporta la correlación espacial</em></h1>
+    <p class="sub">Regresión sobre posición y relieve + kriging del residuo — kriging universal — programado en R base con <span style="font-family:var(--mono);color:var(--dark-acc)">terra</span> para leer los rásteres.</p>
+  </div>
+  <div class="meta" style="position:relative;z-index:1">
+    <div><b>Integrantes</b>César A. Reyes Oliveros<br>Yesenia Díaz<br>Juan Pablo Maya</div>
+    <div><b>Datos</b>CHIRPS · NASA POWER · SRTM<br>Grilla 0,05° · EPSG:4326<br>688 celdas · 70 estaciones</div>
+    <div><b>Profesor</b>Johann A. Ospina<br><span style="opacity:.75">Juan-maya935/<br>Proyecto1_Analitic</span></div>
+  </div>
+  <div class="map">
+    <img src="img/fig02_borde_valle.png" alt="Mapa de precipitación de la semana 44 en el Valle del Cauca">
+    <div class="lab a"><span class="w">&gt;200</span>mm · vertiente pacífica</div>
+    <div class="lab b"><span class="w">30–50</span>mm · valle interandino<br>150 km al oriente</div>
+  </div>
+</div></section>
+
+<!-- 2 · LA PREGUNTA -->
+<section class="slide"><div class="frame">
+  <div class="ghost">01</div>
+  <div class="head"><div class="eyebrow"><b>Problema</b></div>
+  <h2>Tres climas en 150 km. La pregunta no es <em>predecir lluvia</em>: es cuánto queda en el residuo <span class="s">después</span> de una buena regresión.</h2></div>
+  <div class="body cols-57">
+    <div class="text" style="font-size:calc(var(--u)*1.4);gap:calc(var(--u)*1)">
+      <p class="claim" style="font-size:calc(var(--u)*1.85)">Vertiente pacífica, valle interandino y dos cordilleras: el banco de pruebas ideal para la correlación espacial.</p>
+      <p>La costa supera los <span class="hl">200 mm/semana</span>; el valle se queda en <span class="hl s">30–50 mm</span>. Un factor de 5 a 7 en unos 150 km: efecto orográfico clásico, la masa húmeda del Pacífico descarga contra la cordillera Occidental.</p>
+      <p><strong>Estrategia:</strong> kriging universal. Separar la lluvia en una <strong>deriva determinística</strong> (posición + altitud) y un <strong>residuo espacialmente correlacionado</strong> que se interpola con kriging ordinario.</p>
+      <div class="formula" style="font-size:calc(var(--u)*1.2)">Z(s) = <i>m(s)</i> + <i>ε(s)</i><br>m(s) = β₀ + β₁·x + β₂·y + β₃·altitud (+ β₄·x²)</div>
+    </div>
+    <figure class="fig"><img src="img/fig02_borde_valle.png" alt="Mapa de precipitación semana 44 recortado al límite del Valle del Cauca"><figcaption><b>Fig. 3</b>Precipitación semana 44 (mm) recortada al límite GADM del departamento</figcaption></figure>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- DIVISOR I -->
+<section class="slide"><div class="frame dark divider">
+  <canvas class="topo"></canvas>
+  <div class="roman">I</div>
+  <div style="position:relative;z-index:1">
+    <div class="eyebrow"><b>Parte I</b><span class="sep">·</span><span>Datos y método</span></div>
+    <h2 style="margin-top:calc(var(--u)*1.2)">Auditar el dato antes de modelarlo, y elegir el momento donde la señal espacial es más fuerte.</h2>
+    <p class="lead">Tres arreglos que el enunciado no advertía, una semana elegida con criterio, y el kriging universal desarmado en seis pasos.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">688</div><div class="l">celdas reales</div></div>
+      <div class="stat seco"><div class="n">−76 867</div><div class="l">centinela CHIRPS</div></div>
+      <div class="stat"><div class="n">S44</div><div class="l">semana más lluviosa</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 3 · AUDITORÍA DE DATOS -->
+<section class="slide"><div class="frame">
+  <div class="ghost">02</div>
+  <div class="head"><div class="eyebrow"><b>Datos</b><span class="sep">·</span><span>auditoría previa</span></div>
+  <h2>Antes de modelar hubo que arreglar tres cosas que el enunciado <span class="s">no</span> advertía.</h2></div>
+  <div class="body cols-57">
+    <div class="text">
+      <ul>
+        <li><strong>Valores centinela.</strong> CHIRPS codifica vacíos como <span class="hl s">−76 867,3</span> en 104 celdas. Filtro <code style="font-family:var(--mono);font-size:.9em">r[r &lt; 0] &lt;- NA</code> → mínimo físico 2,77 mm.</li>
+        <li><strong>El rectángulo no es el departamento.</strong> 1 443 píxeles incluyen océano y vecinos. Enmascarando con altitud y lluvia quedan <span class="hl">688 celdas</span>: ese es el denominador.</li>
+        <li><strong>Cobertura real de covariables.</strong> NASA POWER es 0,5° (10× más grueso). El remuestreo no rellenó huecos: la radiación deja <span class="hl s">3 valores</span> para todo el Valle.</li>
+      </ul>
+      <p>Modelo con <strong>altitud + coordenadas</strong>: cobertura completa, ningún dato inventado.</p>
+    </div>
+    <div>
+      <table>
+        <tr><th>Variable</th><th class="num">Celdas</th><th class="num">% área</th><th class="num">Distintos</th><th>Decisión</th></tr>
+        <tr><td>Precipitación · CHIRPS</td><td class="num">688</td><td class="num">100,0</td><td class="num">688</td><td><span class="tag ok">respuesta</span></td></tr>
+        <tr><td>Altitud · SRTM</td><td class="num">688</td><td class="num">100,0</td><td class="num">688</td><td><span class="tag ok">entra</span></td></tr>
+        <tr class="bad"><td>Temperatura · POWER</td><td class="num">123</td><td class="num">17,9</td><td class="num">56</td><td><span class="tag no">se descarta</span></td></tr>
+        <tr class="bad"><td>Radiación · POWER</td><td class="num">28</td><td class="num">4,1</td><td class="num">3</td><td><span class="tag no">se descarta</span></td></tr>
+      </table>
+      <p class="tnote">Tabla 1 · porcentaje sobre las 688 celdas del área de estudio. Medido contra las 1 443 del rectángulo la altitud “cubría” 47,7 % y se habría descartado por error.</p>
+      <div class="stats" style="margin-top:calc(var(--u)*1.8)">
+        <div class="stat"><div class="n">688</div><div class="l">celdas válidas</div></div>
+        <div class="stat seco"><div class="n">104</div><div class="l">centinelas filtrados</div></div>
+        <div class="stat seco"><div class="n">3</div><div class="l">valores de radiación</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 4 · SEMANA 44 -->
+<section class="slide"><div class="frame">
+  <div class="ghost">02</div>
+  <div class="head"><div class="eyebrow"><b>Datos</b><span class="sep">·</span><span>elección de la semana</span></div>
+  <h2>Se trabaja la <em>semana 44</em> de la climatología 2010–2025: la más lluviosa, donde la señal espacial es más fuerte.</h2></div>
+  <div class="body cols-75">
+    <figure class="fig"><img src="img/fig01_ciclo_anual.png" alt="Ciclo anual promedio de la precipitación semanal 2010-2025"><figcaption><b>Fig. 1</b>Ciclo anual promedio. Régimen bimodal: la firma del doble paso de la ZCIT sobre el departamento</figcaption></figure>
+    <div class="text">
+      <div class="big">91,9 mm<small>semana 44 · máximo</small></div>
+      <div class="big seco" style="font-size:calc(var(--u)*4.6)">28,7 mm<small>semana 3 · veranillo de enero</small></div>
+      <p><strong>Por qué la climatología y no un año suelto:</strong> al promediar 16 años, El Niño y La Niña dejan de meterse en el residuo, que es justo lo que después modela el semivariograma. Sobre un año concreto el rango estimado dejaría de ser interpretable.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 5 · MÉTODO -->
+<section class="slide"><div class="frame">
+  <div class="ghost">03</div>
+  <div class="head"><div class="eyebrow"><b>Marco teórico</b><span class="sep">·</span><span>kriging universal</span></div>
+  <h2>El método completo en seis pasos, sobre los datos del proyecto.</h2></div>
+  <div class="body cols-84">
+    <figure class="fig"><img src="img/fig19_mapa_metodo.png" alt="Los seis pasos del kriging universal sobre los datos"><figcaption><b>Fig. 2</b>Dato → deriva → residuo → Moran → semivariograma → pesos de kriging</figcaption></figure>
+    <div class="steps" style="font-size:calc(var(--u)*1.08);gap:calc(var(--u)*.85)">
+      <div class="step"><span class="k">1</span><div><b>Deriva · MCO</b><code>β̂ = (XᵀX)⁻¹XᵀZ</code> · residuo ε̂ = Z − Xβ̂</div></div>
+      <div class="step"><span class="k">2</span><div><b>¿Hay estructura?</b>Moran I y Geary C sobre ε̂ · 999 permutaciones</div></div>
+      <div class="step"><span class="k">3</span><div><b>Cuánta y hasta dónde</b>Semivariograma γ̂(h) + esférico / exponencial / gaussiano</div></div>
+      <div class="step"><span class="k">4</span><div><b>Kriging ordinario</b><code>Σλⱼ C(sᵢ−sⱼ) + μ = C(sᵢ−s₀) · Σλⱼ = 1</code></div></div>
+      <div class="step"><span class="k">5</span><div><b>Predicción</b><code>Ẑ(s₀) = m̂(s₀) + ε̂(s₀)</code></div></div>
+      <div class="step"><span class="k">6</span><div><b>Validación LOOCV</b>RMSE · MAE · R² · sd(z) del error estandarizado</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 6 · EXPLORATORIO -->
+<section class="slide"><div class="frame">
+  <div class="ghost">04</div>
+  <div class="head"><div class="eyebrow"><b>Análisis exploratorio</b></div>
+  <h2>70 estaciones sorteadas, 2 415 pares. La lluvia es <span class="s">muy asimétrica</span>… pero la pregunta correcta es si lo son los residuales.</h2></div>
+  <div class="body cols-66">
+    <figure class="fig"><img src="img/fig03_distribucion.png" alt="Histograma y diagrama de caja de la precipitación en las 70 estaciones"><figcaption><b>Tabla 2</b>Precipitación en las 70 estaciones · semana 44 · Shapiro-Wilk W = 0,816, p = 6,4e−08</figcaption></figure>
+    <div class="text">
+      <table>
+        <tr><th>Mín</th><th>Q1</th><th>Mediana</th><th>Media</th><th>Q3</th><th>Máx</th><th>CV</th></tr>
+        <tr><td class="num">34,9</td><td class="num">51,7</td><td class="num">64,2</td><td class="num">91,1</td><td class="num">125,9</td><td class="num">189,0</td><td class="num">56 %</td></tr>
+      </table>
+      <p>Media 42 % por encima de la mediana. De Q1 a mediana 12 mm; de mediana a Q3, 62 mm. La cola larga <span class="hl">es la vertiente pacífica</span>.</p>
+      <table>
+        <tr><th>Covariable</th><th class="num">r Pearson</th><th>Lectura</th></tr>
+        <tr><td>Longitud (x, km)</td><td class="num">−0,890</td><td>sola explica el 79 % de la varianza</td></tr>
+        <tr><td>Altitud (m)</td><td class="num">−0,651</td><td>fuerte en apariencia — <span class="tag no">confundida</span></td></tr>
+        <tr><td>Latitud (y, km)</td><td class="num">−0,274</td><td>aporte marginal</td></tr>
+      </table>
+      <p><strong>Por qué 70 y no 688:</strong> el kriging invierte una matriz de orden n+1 por celda y por iteración; y con las 688 celdas ya no queda nada que interpolar. El muestreo simula una red de observación.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- DIVISOR II -->
+<section class="slide"><div class="frame dark divider">
+  <canvas class="topo"></canvas>
+  <div class="roman">II</div>
+  <div style="position:relative;z-index:1">
+    <div class="eyebrow"><b>Parte II</b><span class="sep">·</span><span>Modelo y correlación espacial</span></div>
+    <h2 style="margin-top:calc(var(--u)*1.2)">Lo que la regresión explica, y lo que deja <span class="s">agrupado en manchas</span> sobre el mapa.</h2>
+    <p class="lead">Una confusión que cambia el signo de la altitud, residuales que sí son normales, y un índice de Moran que dice que la regresión sola deja información sobre la mesa.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">84 %</div><div class="l">varianza · regresión</div></div>
+      <div class="stat seco"><div class="n">+0,0098</div><div class="l">altitud · signo invertido</div></div>
+      <div class="stat"><div class="n">0,793</div><div class="l">Moran I · residuales</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 7 · TENDENCIA Y CONFUSIÓN -->
+<section class="slide"><div class="frame">
+  <div class="ghost">05</div>
+  <div class="head"><div class="eyebrow"><b>Modelación</b><span class="sep">·</span><span>la tendencia</span></div>
+  <h2>La altitud parecía <span class="s">secar</span> el territorio. Controlando la posición, <em>lo humedece</em>: un caso de manual de confusión.</h2></div>
+  <div class="body" style="grid-template-columns:4fr 4fr 4fr">
+    <figure class="fig"><img src="img/fig07c_estratificado.png" alt="Altitud vs precipitación estratificada por tercil de longitud"><figcaption><b>Fig. 4a</b>Estratificado por longitud: oeste −0,058 · centro +0,017 · este +0,005 mm/m</figcaption></figure>
+    <figure class="fig"><img src="img/fig07d_variable_anyadida.png" alt="Gráfico de variable añadida de la altitud"><figcaption><b>Fig. 4b</b>Variable añadida: la pendiente +0,0098 es el coeficiente del modelo</figcaption></figure>
+    <div class="text" style="font-size:calc(var(--u)*1.35)">
+      <table>
+        <tr><th>Coef. modelo B</th><th class="num">Est.</th><th class="num">p</th></tr>
+        <tr><td>Intercepto</td><td class="num">79,50</td><td class="num">&lt;0,0001</td></tr>
+        <tr><td>x_km</td><td class="num">−1,161</td><td class="num">&lt;0,0001</td></tr>
+        <tr><td>y_km</td><td class="num">+0,317</td><td class="num">&lt;0,0001</td></tr>
+        <tr class="win"><td>altitud</td><td class="num">+0,0098</td><td class="num">0,0317</td></tr>
+      </table>
+      <p>R² = 0,845 (aj. 0,838). Test F anidado A vs B: F = 4,82, p = 0,032 → <span class="hl">la altitud se queda</span>.</p>
+      <p>Correlación altitud–longitud = <strong>0,755</strong>: la costa es baja y occidental, la cordillera alta y oriental. “Más alto, menos lluvia” decía en realidad <span class="hl s">“más al oriente, menos lluvia”</span>.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 8 · RESIDUALES -->
+<section class="slide"><div class="frame">
+  <div class="ghost">05</div>
+  <div class="head"><div class="eyebrow"><b>Modelación</b><span class="sep">·</span><span>diagnóstico de residuales</span></div>
+  <h2>Quitada la deriva, los residuales <em>sí son normales</em>. Pero dibujan una U y forman manchas: la recta está mal especificada.</h2></div>
+  <div class="body" style="grid-template-columns:7fr 5fr">
+    <div style="display:grid;grid-template-rows:minmax(0,1fr) auto;gap:calc(var(--u)*1.2);min-height:0">
+      <figure class="fig"><img src="img/fig06_residuales.png" alt="Histograma, QQ y residual vs ajustado del modelo B"><figcaption><b>Fig. 5</b>Residuales del modelo B: histograma · Q-Q · residual vs ajustado (la U)</figcaption></figure>
+      <table>
+        <tr><th>Serie</th><th class="num">sd (mm)</th><th class="num">Shapiro W</th><th class="num">p</th><th>Conclusión</th></tr>
+        <tr><td>Precipitación cruda</td><td class="num">51,32</td><td class="num">0,816</td><td class="num">6,4e−08</td><td><span class="tag no">no normal</span></td></tr>
+        <tr class="win"><td>Residuales modelo B</td><td class="num">20,21</td><td class="num">0,975</td><td class="num">0,174</td><td><span class="tag ok">normal</span></td></tr>
+      </table>
+    </div>
+    <div style="display:grid;grid-template-rows:minmax(0,1fr) auto;gap:calc(var(--u)*1.2);min-height:0">
+      <figure class="fig"><img src="img/fig08c_mapa_residuales.png" alt="Mapa de residuales de la tendencia"><figcaption><span class="tag r">rojo · subestima</span><span class="tag b">azul · sobreestima</span></figcaption></figure>
+      <div class="text" style="font-size:calc(var(--u)*1.3)"><p>La asimetría era la tendencia, no la distribución: <span class="hl">no hacía falta el logaritmo</span>. Y la U (ajustado ≈100 → residual −40) anticipa un término cuadrático.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 9 · MORAN -->
+<section class="slide"><div class="frame">
+  <div class="ghost">06</div>
+  <div class="head"><div class="eyebrow"><b>Correlación espacial</b><span class="sep">·</span><span>índice de Moran</span></div>
+  <h2>Después de que la regresión se llevó el 84 % de la varianza, lo que sobra <em>sigue teniendo estructura espacial fuerte</em>.</h2></div>
+  <div class="body cols-57">
+    <figure class="fig"><img src="img/fig09_moran_scatter.png" alt="Diagrama de Moran de los residuales"><figcaption><b>Fig. 6a</b>Diagrama de Moran: la pendiente de la recta es I · rojo alto-alto · azul bajo-bajo</figcaption></figure>
+    <div class="text">
+      <div class="stats">
+        <div class="stat"><div class="n">0,793</div><div class="l">Moran I · resid. · 20 km</div></div>
+        <div class="stat seco"><div class="n">−0,014</div><div class="l">esperado bajo azar</div></div>
+        <div class="stat azul"><div class="n">0,001</div><div class="l">p · 999 permutaciones</div></div>
+      </div>
+      <table>
+        <tr><th>Pctl</th><th class="num">Umbral km</th><th class="num">Vecinos</th><th class="num">I precip.</th><th class="num">I resid.</th><th class="num">C resid.</th></tr>
+        <tr><td>5</td><td class="num">19,7</td><td class="num">3,5</td><td class="num">0,955</td><td class="num">0,793</td><td class="num">0,187</td></tr>
+        <tr><td>10</td><td class="num">28,0</td><td class="num">6,9</td><td class="num">0,938</td><td class="num">0,722</td><td class="num">0,275</td></tr>
+        <tr><td>25</td><td class="num">48,5</td><td class="num">17,3</td><td class="num">0,812</td><td class="num">0,460</td><td class="num">0,540</td></tr>
+      </table>
+      <p>Moran y Geary programados a mano con la fórmula de clase. Tres umbrales, no uno, porque el umbral cambia el número. I alto y C bajo en los tres: <span class="hl">la regresión deja información espacial sobre la mesa</span>. Ese hueco lo llena el kriging.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 10 · CORRELOGRAMA -->
+<section class="slide"><div class="frame">
+  <div class="ghost">06</div>
+  <div class="head"><div class="eyebrow"><b>Correlación espacial</b><span class="sep">·</span><span>correlograma</span></div>
+  <h2>No decae a cero y se queda ahí: es una <em>onda</em>. Y esa onda fija el corte del semivariograma en 50 km.</h2></div>
+  <div class="body cols-66">
+    <figure class="fig"><img src="img/fig10_correlograma.png" alt="Correlograma de los residuales de la tendencia"><figcaption><b>Fig. 6b</b>I de Moran por distancia · línea roja: E[I] bajo aleatoriedad</figcaption></figure>
+    <div class="text">
+      <ul>
+        <li><span class="hl">0–48 km · I de +0,79 a 0.</span> Dependencia espacial genuina; anticipa el rango del semivariograma.</li>
+        <li><span class="hl b">≈89 km · I = −0,54.</span> Media anchura del departamento: el azul del centro del valle contra el rojo de un flanco.</li>
+        <li><span class="hl r">≈149 km · I = +0,51.</span> Los dos flancos se reencuentran; ambos rojos.</li>
+      </ul>
+      <p class="claim">El lóbulo negativo dice que los residuales no son estacionarios de segundo orden a gran distancia: queda estructura determinística.</p>
+      <p>Los modelos de semivariograma asumen crecimiento monótono hasta una meseta, y eso solo se cumple hasta ~50 km. El libro del curso respalda limitar la distancia máxima “en caso de comportamiento errático a distancias mayores”.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 11 · SEMIVARIOGRAMA -->
+<section class="slide"><div class="frame">
+  <div class="ghost">07</div>
+  <div class="head"><div class="eyebrow"><b>Semivariograma</b></div>
+  <h2>Tendencia lineal vs cuadrática: la decisión deja de ser preferencia y pasa a ser <em>evidencia</em>. La meseta debe aproximar la varianza.</h2></div>
+  <div class="body" style="grid-template-columns:4fr 4fr 4.4fr">
+    <figure class="fig"><img src="img/fig11a_variograma_lineal.png" alt="Semivariograma de residuales de tendencia lineal"><figcaption><span class="tag no">lineal</span>sube sin meseta, cruza la varianza</figcaption></figure>
+    <figure class="fig"><img src="img/fig11b_variograma_cuadratica.png" alt="Semivariograma de residuales de tendencia cuadrática"><figcaption><span class="tag ok">cuadrática</span>meseta sobre la varianza a ~40 km</figcaption></figure>
+    <div class="text" style="font-size:calc(var(--u)*1.3)">
+      <table>
+        <tr><th>Tend.</th><th>Modelo</th><th class="num">Meseta</th><th class="num">Var.</th><th class="num">Razón</th></tr>
+        <tr class="win"><td>cuad.</td><td>esférico</td><td class="num">161,7</td><td class="num">158,8</td><td class="num">1,02</td></tr>
+        <tr><td>cuad.</td><td>gaussiano</td><td class="num">152,9</td><td class="num">158,8</td><td class="num">0,96</td></tr>
+        <tr><td>cuad.</td><td>exponencial</td><td class="num">285,6</td><td class="num">158,8</td><td class="num">1,80</td></tr>
+        <tr class="bad"><td>lineal</td><td>gaussiano</td><td class="num">537,6</td><td class="num">408,4</td><td class="num">1,32</td></tr>
+        <tr class="bad"><td>lineal</td><td>esférico</td><td class="num">769,6</td><td class="num">408,4</td><td class="num">1,88</td></tr>
+        <tr class="bad"><td>lineal</td><td>exponencial</td><td class="num">1275,1</td><td class="num">408,4</td><td class="num">3,12</td></tr>
+      </table>
+      <p class="tnote">Tabla 7 · corte a 50 km · ajuste por mínimos cuadrados con optim() y varios arranques. La lineal falla en 3 de 3; la cuadrática es coherente en 2 de 3.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- DIVISOR III -->
+<section class="slide"><div class="frame dark divider">
+  <canvas class="topo"></canvas>
+  <div class="roman">III</div>
+  <div style="position:relative;z-index:1">
+    <div class="eyebrow"><b>Parte III</b><span class="sep">·</span><span>Validación y predicción</span></div>
+    <h2 style="margin-top:calc(var(--u)*1.2)">Elegir con tres filtros, no con el menor error. Y reconstruir el mapa completo <em>desde 70 puntos</em>.</h2>
+    <p class="lead">Leave-one-out sobre seis combinaciones, dos trampas que el RMSE no ve, y la respuesta gráfica al enunciado: lo que aporta la tendencia y lo que agrega el kriging.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">−37 %</div><div class="l">RMSE con kriging</div></div>
+      <div class="stat"><div class="n">0,950</div><div class="l">R² · 620 celdas no vistas</div></div>
+      <div class="stat azul"><div class="n">1,06</div><div class="l">sd(z) · calibración</div></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 12 · VALIDACIÓN -->
+<section class="slide"><div class="frame">
+  <div class="ghost">08</div>
+  <div class="head"><div class="eyebrow"><b>Validación</b><span class="sep">·</span><span>leave-one-out</span></div>
+  <h2>El menor RMSE <span class="s">no</span> es la mejor opción. Se eligió con tres filtros a la vez; <em>exactamente una</em> combinación los pasa.</h2></div>
+  <div class="body cols-75">
+    <div>
+      <table>
+        <tr><th>Tend.</th><th>Modelo</th><th class="num">RMSE sin krig.</th><th class="num">RMSE con krig.</th><th class="num">Mejora</th><th class="num">R² CV</th><th class="num">sd(z)</th><th class="num">κ(A)</th></tr>
+        <tr><td>lineal</td><td>exponencial</td><td class="num">21,32</td><td class="num">7,09</td><td class="num">66,7 %</td><td class="num">0,981</td><td class="num" style="color:var(--seco)">0,69</td><td class="num" style="color:var(--seco)">7,7e6</td></tr>
+        <tr><td>lineal</td><td>esférico</td><td class="num">21,32</td><td class="num">7,15</td><td class="num">66,5 %</td><td class="num">0,980</td><td class="num" style="color:var(--seco)">0,73</td><td class="num" style="color:var(--seco)">1,1e6</td></tr>
+        <tr><td>cuadrática</td><td>exponencial</td><td class="num">14,02</td><td class="num">8,72</td><td class="num">37,8 %</td><td class="num">0,971</td><td class="num">1,01</td><td class="num">1,7e5</td></tr>
+        <tr class="win"><td>cuadrática</td><td>esférico</td><td class="num">14,02</td><td class="num">8,86</td><td class="num">36,8 %</td><td class="num">0,970</td><td class="num">1,06</td><td class="num">1,0e4</td></tr>
+        <tr class="bad"><td>cuadrática</td><td>gaussiano</td><td class="num">14,02</td><td class="num">23,16</td><td class="num">−65,3 %</td><td class="num">0,793</td><td class="num">18,61</td><td class="num">1,2e5</td></tr>
+        <tr class="bad"><td>lineal</td><td>gaussiano</td><td class="num">21,32</td><td class="num">160,29</td><td class="num">−651,9 %</td><td class="num">−8,897</td><td class="num">339,0</td><td class="num">1,2e8</td></tr>
+      </table>
+      <p class="tnote">Tabla 8 · 70 iteraciones por fila, reestimando regresión y sistema de kriging con 69 estaciones. sd(z) ≈ 1 si la varianza de kriging es creíble. κ(A): número de condición de la matriz.</p>
+    </div>
+    <div class="steps" style="font-size:calc(var(--u)*1.2);gap:calc(var(--u)*1)">
+      <div class="step"><span class="k">1</span><div><b>Estacionariedad</b>meseta / varianza ≈ 1, según el libro</div></div>
+      <div class="step"><span class="k">2</span><div><b>Calibración</b>sd(z) entre 0,80 y 1,25, o el mapa de incertidumbre no significa nada</div></div>
+      <div class="step"><span class="k">3</span><div><b>Estabilidad</b>κ(A) acotado, para que los pesos no exploten</div></div>
+      <div class="text" style="font-size:inherit"><p><strong>Dos trampas.</strong> El gaussiano ajusta muy bien el variograma y destroza la predicción (autovalor mínimo 0,0086 vs 9,13 del esférico). Lineal+exponencial baja a 7,09 mm, pero su meseta triplica la varianza y su sd(z) = 0,69 exageraría la precisión un 45 %.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 13 · MODELO FINAL -->
+<section class="slide"><div class="frame">
+  <div class="ghost">08</div>
+  <div class="head"><div class="eyebrow"><b>Validación</b><span class="sep">·</span><span>modelo seleccionado</span></div>
+  <h2>Tendencia cuadrática + semivariograma esférico. Pepita 0, meseta 161,7 mm², rango <em>56,1 km</em>.</h2></div>
+  <div class="body" style="grid-template-columns:7fr 3.6fr 3fr">
+    <figure class="fig"><img src="img/fig12_validacion_cruzada.png" alt="Diagnóstico de la validación cruzada"><figcaption><b>Fig. 8a</b>Observado vs predicho · residuos de validación · Q-Q del error estandarizado</figcaption></figure>
+    <figure class="fig"><img src="img/fig13_mapa_error_loocv.png" alt="Error de validación cruzada sobre el mapa"><figcaption><b>Fig. 8b</b>Error LOOCV: ya no forma manchas</figcaption></figure>
+    <div class="text">
+      <div class="big" style="font-size:calc(var(--u)*5.4)">−37 %<small>RMSE · 14,02 → 8,86 mm</small></div>
+      <div class="stats" style="grid-template-columns:1fr 1fr;gap:calc(var(--u)*.8)">
+        <div class="stat"><div class="n" style="font-size:calc(var(--u)*2.6)">0,970</div><div class="l">R² validación</div></div>
+        <div class="stat"><div class="n" style="font-size:calc(var(--u)*2.6)">5,53</div><div class="l">MAE mm</div></div>
+        <div class="stat azul"><div class="n" style="font-size:calc(var(--u)*2.6)">1,06</div><div class="l">sd(z)</div></div>
+        <div class="stat azul"><div class="n" style="font-size:calc(var(--u)*2.6)">1e4</div><div class="l">κ(A)</div></div>
+      </div>
+      <p style="font-size:calc(var(--u)*1.25)">La mejora sale <span class="hl">solo</span> de explotar la correlación del residuo, sin ninguna variable nueva. El kriging absorbió la estructura que la regresión dejó suelta.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 14 · PREDICCIÓN -->
+<section class="slide"><div class="frame">
+  <div class="ghost">09</div>
+  <div class="head"><div class="eyebrow"><b>Predicción</b></div>
+  <h2>Reconstruir el mapa completo desde 70 puntos: <em>R² = 0,950</em> en las 620 celdas que nunca se observaron.</h2></div>
+  <div class="body cols-75">
+    <figure class="fig"><img src="img/fig17_observado_vs_estimado.png" alt="CHIRPS observado vs kriging desde 70 estaciones"><figcaption><b>Fig. 9</b>Observado vs estimado, misma escala. El estimado es algo más suave: lo esperado de un interpolador óptimo en media cuadrática</figcaption></figure>
+    <div class="text">
+      <table>
+        <tr><th>Conjunto</th><th class="num">Celdas</th><th class="num">RMSE</th><th class="num">R²</th></tr>
+        <tr><td>LOOCV estaciones</td><td class="num">70</td><td class="num">8,86</td><td class="num">0,970</td></tr>
+        <tr class="win"><td>Celdas sin estación</td><td class="num">620</td><td class="num">10,79</td><td class="num">0,950</td></tr>
+        <tr class="bad"><td>Celdas con estación</td><td class="num">68</td><td class="num">2,09</td><td class="num">—</td></tr>
+      </table>
+      <p><span class="hl">El número honesto es el de las 620 celdas.</span> Rango observado 34,9–224,8 mm; predicho 34,6–223,2. Media 88,9 vs 90,1 observada: sesgo −1,4 %, despreciable frente al error.</p>
+      <p>Los 2,09 mm en celdas con estación <strong>no se celebran</strong>: con pepita 0 el kriging interpola exacto en los puntos observados. Mide una propiedad del método, no su capacidad predictiva.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 15 · INCERTIDUMBRE + DESCOMPOSICIÓN -->
+<section class="slide"><div class="frame">
+  <div class="ghost">09</div>
+  <div class="head"><div class="eyebrow"><b>Predicción</b><span class="sep">·</span><span>incertidumbre y descomposición</span></div>
+  <h2>El panel B no es ruido: tiene estructura organizada. <em>Eso</em> es el papel de la correlación espacial que había que evaluar.</h2></div>
+  <div class="body" style="grid-template-columns:3.6fr 6.4fr 3fr">
+    <figure class="fig"><img src="img/fig15_mapa_incertidumbre.png" alt="Desviación estándar de kriging"><figcaption><b>Fig. 10a</b>sd de kriging (mm)</figcaption></figure>
+    <figure class="fig"><img src="img/fig16_descomposicion.png" alt="Componente de tendencia y componente residual de kriging"><figcaption><b>Fig. 10b</b>(A) lo que aporta la tendencia · (B) lo que agrega el kriging del residuo</figcaption></figure>
+    <div class="text" style="font-size:calc(var(--u)*1.3)">
+      <div class="stats" style="grid-template-columns:1fr;gap:calc(var(--u)*.8)">
+        <div class="stat"><div class="n" style="font-size:calc(var(--u)*3)">1,1 mm</div><div class="l">sd mínima · sobre estaciones</div></div>
+        <div class="stat seco"><div class="n" style="font-size:calc(var(--u)*3)">12,6 mm</div><div class="l">sd máxima · filo oriental, punta norte</div></div>
+      </div>
+      <p>La incertidumbre se comporta como manda la teoría: crece con la distancia al dato más cercano. Este mapa <span class="hl b">solo es legible porque sd(z) = 1,06</span>; con el modelo de menor RMSE habría exagerado la precisión.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 16 · CONCLUSIONES -->
+<section class="slide"><div class="frame dark">
+  <canvas class="topo"></canvas>
+  <div class="head" style="position:relative;z-index:1"><div class="eyebrow"><b>Conclusiones</b></div>
+  <h2 style="max-width:80%">La correlación espacial no es un adorno del modelo: <em>es la mitad del modelo</em>.</h2></div>
+  <div class="body" style="grid-template-rows:auto 1fr;gap:calc(var(--u)*2.2)">
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="n">84 %</div><div class="l">varianza · regresión</div></div>
+      <div class="stat"><div class="n">0,79</div><div class="l">Moran I residual · p 0,001</div></div>
+      <div class="stat seco"><div class="n">−37 %</div><div class="l">error con kriging</div></div>
+      <div class="stat"><div class="n">0,950</div><div class="l">R² · 620 celdas no vistas</div></div>
+    </div>
+    <div class="three">
+      <div class="card"><div class="num">1</div><h3>La altitud no seca: humedece</h3><p>Sola, r = −0,651. Controlando longitud, +0,0098 mm/m. La conclusión ingenua es exactamente la contraria de la que sostiene el modelo.</p></div>
+      <div class="card"><div class="num s">2</div><h3>Ajustar mejor el variograma no es predecir mejor</h3><p>El gaussiano pega muy bien a la nube empírica y da R² = −8,9 en validación: matriz casi singular, pesos que explotan.</p></div>
+      <div class="card"><div class="num s">3</div><h3>El menor RMSE no siempre es la mejor decisión</h3><p>Lineal+exponencial baja a 7,09 mm, pero es no estacionario y mal calibrado: habría producido un mapa de incertidumbre engañoso.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<!-- 17 · LIMITACIONES -->
+<section class="slide"><div class="frame" style="--acc:var(--seco)">
+  <div class="ghost">10</div>
+  <div class="head"><div class="eyebrow"><b>Limitaciones</b><span class="sep">·</span><span>declaradas, no escondidas</span></div>
+  <h2>Cuatro cosas que este trabajo <span class="s">asume</span> y prefiere decir.</h2></div>
+  <div class="body" style="grid-template-rows:1fr auto">
+    <div class="limits">
+      <div><b>Producto grillado, no estaciones reales</b>Las 688 celdas vienen de CHIRPS. El R² mide capacidad de reconstruir ese campo, no destreza frente a observaciones independientes.</div>
+      <div><b>El efecto de la altitud no es homogéneo</b>Negativo en la vertiente pacífica, positivo en laderas interiores. Lo correcto sería una interacción altitud × longitud; se omitió por quedarse en lo visto en clase.</div>
+      <div><b>No estacionariedad más allá de ~50 km</b>El correlograma obligó a cortar el variograma y deja fuera la estructura de gran escala restante.</div>
+      <div><b>Una sola semana</b>La 44 es la más lluviosa del año promedio; los parámetros del variograma podrían cambiar en temporada seca.</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:end;border-top:2px solid var(--ink);padding-top:calc(var(--u)*1.2);gap:calc(var(--u)*2)">
+      <div>
+        <div class="eyebrow"><b>Repositorio</b></div>
+        <div style="font-family:var(--mono);font-size:calc(var(--u)*1.35);margin-top:.3em;color:var(--ink)">github.com/Juan-maya935/Proyecto1_Analitic</div>
+        <div style="font-size:calc(var(--u)*1.2);color:var(--muted);margin-top:.3em">R/proyecto1.R · un archivo reproducible · terra + R base · 27 figuras en resultados/</div>
+      </div>
+      <div style="text-align:right;font-family:var(--mono);font-size:calc(var(--u)*1.05);color:var(--muted);line-height:1.6">César A. Reyes Oliveros · Yesenia Díaz · Juan Pablo Maya<br>Analítica de Datos · Johann A. Ospina · UAO 2026-2S</div>
+    </div>
+  </div>
+  <div class="foot"><span>Lluvia y kriging en el Valle</span><span class="n"></span></div>
+</div></section>
+
+<div class="nav" id="nav">← → · 1 / 20</div>
+<script>
+(function(){
+  var slides=[].slice.call(document.querySelectorAll('.slide')),nav=document.getElementById('nav'),N=slides.length;
+  slides.forEach(function(s,i){var n=s.querySelector('.foot .n');if(n)n.textContent=(i+1)+' / '+N;});
+  function cur(){return Math.round(window.scrollY/window.innerHeight);}
+  function go(i){i=Math.max(0,Math.min(N-1,i));slides[i].scrollIntoView({block:'start'});}
+  function upd(){nav.textContent='← → · '+(cur()+1)+' / '+N;}
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key==='PageDown'||e.key===' '){e.preventDefault();go(cur()+1);}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();go(cur()-1);}
+    else if(e.key==='Home'){go(0);}else if(e.key==='End'){go(N-1);}
+  });
+  window.addEventListener('scroll',upd,{passive:true});upd();
+
+  /* Isolíneas: textura topográfica (marching squares sobre value noise) para las diapos oscuras */
+  function noise2(w,h,seed){
+    var g=[],r=seed;function rnd(){r=(r*16807)%2147483647;return r/2147483647;}
+    var gw=9,gh=6,grid=[];for(var j=0;j<=gh;j++){grid[j]=[];for(var i=0;i<=gw;i++)grid[j][i]=rnd();}
+    function sm(t){return t*t*(3-2*t);}
+    for(var y=0;y<h;y++){g[y]=new Float32Array(w);for(var x=0;x<w;x++){
+      var fx=x/w*gw,fy=y/h*gh,ix=Math.floor(fx),iy=Math.floor(fy),tx=sm(fx-ix),ty=sm(fy-iy);
+      var a=grid[iy][ix],b=grid[iy][Math.min(ix+1,gw)],c=grid[Math.min(iy+1,gh)][ix],d=grid[Math.min(iy+1,gh)][Math.min(ix+1,gw)];
+      g[y][x]=(a*(1-tx)+b*tx)*(1-ty)+(c*(1-tx)+d*tx)*ty;}}
+    return g;
+  }
+  function drawTopo(cv,seed){
+    var W=cv.clientWidth,H=cv.clientHeight,S=6;cv.width=W;cv.height=H;
+    var ctx=cv.getContext('2d'),w=Math.ceil(W/S)+1,h=Math.ceil(H/S)+1,f=noise2(w,h,seed);
+    ctx.lineWidth=1;
+    for(var lv=0.08;lv<1;lv+=0.055){
+      ctx.strokeStyle='rgba(143,224,164,'+(0.06+0.10*Math.abs(Math.sin(lv*9)))+')';ctx.beginPath();
+      for(var y=0;y<h-1;y++)for(var x=0;x<w-1;x++){
+        var a=f[y][x],b=f[y][x+1],c=f[y+1][x+1],d=f[y+1][x];
+        var idx=(a>lv?8:0)|(b>lv?4:0)|(c>lv?2:0)|(d>lv?1:0);if(idx===0||idx===15)continue;
+        function ip(p,q,pv,qv){var t=(lv-pv)/(qv-pv);return [p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t];}
+        var A=[x*S,y*S],B=[(x+1)*S,y*S],C=[(x+1)*S,(y+1)*S],D=[x*S,(y+1)*S];
+        var top=ip(A,B,a,b),right=ip(B,C,b,c),bot=ip(D,C,d,c),left=ip(A,D,a,d),segs=[];
+        switch(idx){case 1:case 14:segs=[[left,bot]];break;case 2:case 13:segs=[[bot,right]];break;case 3:case 12:segs=[[left,right]];break;
+          case 4:case 11:segs=[[top,right]];break;case 5:segs=[[left,top],[bot,right]];break;case 6:case 9:segs=[[top,bot]];break;
+          case 7:case 8:segs=[[left,top]];break;case 10:segs=[[top,right],[left,bot]];break;}
+        segs.forEach(function(s){ctx.moveTo(s[0][0],s[0][1]);ctx.lineTo(s[1][0],s[1][1]);});
+      }
+      ctx.stroke();
+    }
+  }
+  var topos=[].slice.call(document.querySelectorAll('canvas.topo'));
+  function all(){topos.forEach(function(c,i){drawTopo(c,1234+i*977);});}
+  if(document.fonts&&document.fonts.ready){document.fonts.ready.then(all);}else{all();}
+  window.addEventListener('resize',all);
+})();
+</script>
+</body></html>
